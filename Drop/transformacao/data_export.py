@@ -1,5 +1,3 @@
-import asyncio
-import sys
 import pandas as pd
 import json
 import sqlite3
@@ -7,15 +5,9 @@ import os
 import gspread
 from gspread_dataframe import set_with_dataframe
 from datetime import datetime
+import sys # Usado apenas para checagem de erro
 
-# --- CORREÇÃO CONTRA CONGELAMENTO E CRASH (AssertionError) ---
-# Força o Python a usar o loop 'SelectorEventLoop' no Windows, que é mais estável
-try:
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-except AttributeError:
-    pass 
-# --- FIM DA CORREÇÃO ---
+# (O bloco de 'asyncio' foi REMOVIDO daqui, pois estava causando o NotImplementedError)
 
 # --- CONFIGURAÇÕES ---
 INPUT_JSON_FILE = '../data.json' 
@@ -37,37 +29,34 @@ def load_new_data(file_path):
         print(f"ERRO: Arquivo JSON não encontrado em: {json_path}")
         return None
     
-    with open(json_path, 'r', encoding='utf-8') as f:
-        try:
-            data = json.load(f)
-            if not data: 
-                print("ERRO: data.json está vazio.")
-                return None
-            
-            df_novo = pd.DataFrame(data)
-            
-            # Renomeia colunas para o padrão final
-            column_map = {
-                'scrape_time': 'Data da Coleta',
-                'title': 'Produto',
-                'price': 'Preço',
-                'stock': 'Estoque',
-                'status_liquidacao': 'Liquidação',
-                'numero_vendas': 'Qtd. Vendida',
-                'product_id': 'ID do Produto',
-                'url': 'URL'
-            }
-            df_novo.rename(columns=column_map, inplace=True)
-            
-            print(f"Sucesso: {len(df_novo)} novos produtos carregados do data.json.")
-            return df_novo
-            
-        except json.JSONDecodeError:
-            print(f"ERRO: O data.json está corrompido (provavelmente o robô travou no meio da escrita de um item).")
+    # --- A CORREÇÃO ESTÁ AQUI ---
+    # Usamos pd.read_json com lines=True para ler o formato JSONL
+    # que o Scrapy (-o) produz.
+    try:
+        df_novo = pd.read_json(json_path, lines=True)
+        if df_novo.empty:
+            print("ERRO: data.json está vazio.")
             return None
-        except Exception as e:
-            print(f"ERRO ao carregar e formatar JSON: {e}")
-            return None
+    except Exception as e:
+        print(f"ERRO ao carregar e formatar JSON (pode estar corrompido): {e}")
+        return None
+    # --- FIM DA CORREÇÃO ---
+            
+    # Renomeia colunas para o padrão final
+    column_map = {
+        'title': 'Produto',
+        'price': 'Preço',
+        'stock': 'Estoque',
+        'status_liquidacao': 'Liquidação',
+        'numero_vendas': 'Qtd. Vendida',
+        'product_id': 'ID do Produto',
+        'url': 'URL',
+        'scrape_time': 'Data da Coleta' 
+    }
+    df_novo.rename(columns=column_map, inplace=True)
+    
+    print(f"Sucesso: {len(df_novo)} novos produtos carregados do data.json.")
+    return df_novo
 
 def load_old_data(creds_file, spreadsheet_name, worksheet_name):
     """Baixa o histórico antigo do Google Sheets."""
@@ -87,7 +76,12 @@ def load_old_data(creds_file, spreadsheet_name, worksheet_name):
         return df_antigo
         
     except gspread.exceptions.WorksheetNotFound:
-        print(f"AVISO: Aba '{worksheet_name}' não encontrada. Começando do zero.")
+        print(f"AVISO: Aba '{worksheet_name}' não encontrada. Criando uma nova.")
+        try:
+            sh = gc.open(spreadsheet_name)
+            sh.add_worksheet(title=worksheet_name, rows=1, cols=20)
+        except Exception:
+            pass 
         return pd.DataFrame()
     except Exception as e:
         print(f"ERRO ao baixar dados antigos do Google Sheets: {e}")
@@ -99,32 +93,24 @@ def calculate_sales(df):
     print("Iniciando cálculos de vendas e entradas...")
     
     # 1. Garantir tipos de dados corretos
-    # Precisamos converter 'Data da Coleta' para datetime para ordenar corretamente
     df['Data da Coleta'] = pd.to_datetime(df['Data da Coleta'])
     df['Estoque'] = pd.to_numeric(df['Estoque'], errors='coerce').fillna(0).astype(int)
+    # Garante que o ID do Produto seja um texto (string) para o groupby
+    df['ID do Produto'] = df['ID do Produto'].astype(str)
     
-    # 2. Ordenar
-    # Ordena por ID e depois pela data. Isso é essencial para o cálculo.
+    # 2. Ordenar para cálculo
     df.sort_values(by=['ID do Produto', 'Data da Coleta'], inplace=True)
     
     # 3. Remover duplicatas (caso o robô rode duas vezes no mesmo dia)
-    # Mantém apenas a raspagem MAIS RECENTE para cada produto/dia
-    # Criamos uma coluna de 'Data Pura' (sem horas/minutos) para agrupar
     df['Data_Pura'] = df['Data da Coleta'].dt.date
     df.drop_duplicates(subset=['ID do Produto', 'Data_Pura'], keep='last', inplace=True)
     
     # 4. Calcular 'Estoque_Ontem'
-    # Agrupa por produto e usa .shift(1) para puxar o estoque da linha anterior (ontem)
     df['Estoque_Ontem'] = df.groupby('ID do Produto')['Estoque'].shift(1)
     
-    # 5. Calcular Vendas e Entradas (A Lógica da sua conversa)
-    # diff = Estoque Hoje - Estoque Ontem
+    # 5. Calcular Vendas e Entradas
     diff = df['Estoque'] - df['Estoque_Ontem']
-    
-    # Vendas = se a diferença for negativa (vendeu), pegue o valor (abs). Senão, é 0.
     df['Vendas_Dia'] = diff.apply(lambda x: abs(x) if x < 0 else 0).fillna(0).astype(int)
-    
-    # Entradas = se a diferença for positiva (reestoque), pegue o valor. Senão, é 0.
     df['Entradas_Dia'] = diff.apply(lambda x: x if x > 0 else 0).fillna(0).astype(int)
 
     print("Cálculos concluídos.")
@@ -132,7 +118,7 @@ def calculate_sales(df):
     # 6. Limpar colunas auxiliares
     df = df.drop(columns=['Estoque_Ontem', 'Data_Pura'])
     
-    # 7. Reordenar colunas para o formato final
+    # 7. Reordenar colunas para o formato final (COMO VOCÊ PEDIU)
     colunas_finais = [
         'Data da Coleta',
         'Produto',
@@ -146,9 +132,18 @@ def calculate_sales(df):
         'URL'
     ]
     
-    # Filtra colunas que existem no DataFrame (remove 'Item da Exportação' que não é mais necessário)
-    colunas_presentes = [col for col in colunas_finais if col in df.columns]
-    df = df[colunas_presentes]
+    # Garante que todas as colunas existam
+    for col in colunas_finais:
+        if col not in df.columns:
+            df[col] = pd.NA 
+            
+    df = df[colunas_finais]
+    
+    # --- A NOVA ETAPA (PARA NÃO "BAGUNÇAR TUDO") ---
+    # 8. Reordenar o DataFrame final pela Data da Coleta (mais novos no topo)
+    print("Reordenando o DataFrame final por data...")
+    df.sort_values(by='Data da Coleta', ascending=False, inplace=True)
+    # --- FIM DA NOVA ETAPA ---
     
     return df
 
@@ -174,9 +169,12 @@ def overwrite_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
         # Converte datetime para string, senão o gspread falha
         df['Data da Coleta'] = df['Data da Coleta'].dt.strftime('%Y-%m-%d %H:%M:%S')
         
-        set_with_dataframe(worksheet, df, row=1, col=1, include_index=False, include_column_header=True)
+        # Substitui valores nulos (NA) por strings vazias para o Gspread
+        df_export = df.fillna('').astype(str)
         
-        print(f"Sucesso: Dados SOBRESCRITOS no Google Sheets: {spreadsheet_name} -> {worksheet_name}")
+        set_with_dataframe(worksheet, df_export, row=1, col=1, include_index=False, include_column_header=True)
+        
+        print(f"Sucesso: Dados SOBRESCRITOS no Google Sheets: {spreadsheet_name} -> {worksLheet_name}")
         
     except Exception as e:
         print(f"ERRO ao sobrescrever o Google Sheets: {e}")

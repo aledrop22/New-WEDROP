@@ -14,7 +14,6 @@ ROBOTSTXT_OBEY = False
 # Concorrência (MODO LENTO E SEGURO)
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
 DOWNLOAD_DELAY = 1
-DOWNLOAD_TIMEOUT = 35
 
 # Pipeline (desativada, o que é o correto)
 ITEM_PIPELINES = {
@@ -23,11 +22,12 @@ ITEM_PIPELINES = {
 
 FEED_EXPORT_ENCODING = "utf-8"
 
-# --- ATIVAÇÃO DO PLAYWRIGHT (VERSÃO ESTÁVEL) ---
+# --- ATIVAÇÃO DO PLAYWRIGHT (COM A CORREÇÃO DO 'https') ---
 DOWNLOAD_HANDLERS = {
     "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler", # <-- Corrigido (sem o '_')
 }
+# Esta linha é OBRIGATÓRIA para o Playwright funcionar
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor" 
 
 # --- OPÇÕES DO NAVEGADOR (VERSÃO ESTÁVEL) ---
@@ -35,4 +35,4 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
     "headless": True
 }
 
-PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 2
+PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 1

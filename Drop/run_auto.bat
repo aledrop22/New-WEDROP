@@ -9,7 +9,6 @@ REM --- PASSO 2: Executar o script de obtenção de cookie ---
 echo (1/3) Atualizando o cookie de login...
 py obter_cookie.py
 
-REM --- Verificação de erro aprimorada ---
 IF %ERRORLEVEL% NEQ 0 (
     echo ERRO FATAL: O script 'obter_cookie.py' FALHOU.
     exit /b
@@ -30,9 +29,9 @@ REM --- PASSO 4: Executar o Scraper (Scrapy) ---
 echo (2/3) Executando o Scraper (meudrop)...
 echo (Salvando progresso em data.json em tempo real...)
 
-REM --- CORREÇÃO CONTRA CONGELAMENTO E CRASH (ETAPA 2) ---
+REM --- CORREÇÃO CONTRA CRASH/CONGELAMENTO (Funciona no Python 3.12) ---
 set ASYNCIO_EVENT_LOOP=asyncio.SelectorEventLoop
-REM Usamos -o (minúsculo) para ANEXAR (append) os dados item por item
+REM Usamos -o (minúsculo) para salvar em tempo real (sua sugestão)
 cmd /c "py -m scrapy crawl meudrop -o data.json"
 
 REM (Pequena pausa para garantir que o Windows libere o arquivo)
@@ -48,7 +47,7 @@ REM --- PASSO 5: Executar a exportação para o Dashboard ---
 echo (3/3) Exportando dados para SQL e Google Sheets...
 cd transformacao
 
-REM --- CORREÇÃO CONTRA CONGELAMENTO (ETAPA 3) ---
+REM --- CORREÇÃO (ETAPA 3) ---
 cmd /c "py data_export.py"
 cd ..
 
