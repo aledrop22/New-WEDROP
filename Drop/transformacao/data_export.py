@@ -148,7 +148,7 @@ def calculate_sales(df):
     return df
 
 def overwrite_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
-    """Limpa a planilha e envia o DataFrame completo e calculado."""
+    """Insere apenas novos registros abaixo do cabeçalho, preservando dados históricos."""
     try:
         gc = gspread.service_account(filename=creds_file)
         sh = gc.open(spreadsheet_name)
@@ -158,26 +158,74 @@ def overwrite_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
         except gspread.exceptions.WorksheetNotFound:
             print(f"AVISO: Criando nova aba '{worksheet_name}'.")
             worksheet = sh.add_worksheet(title=worksheet_name, rows=1, cols=len(df.columns))
+            # Se a planilha não existia, envia tudo com cabeçalho
+            df['Data da Coleta'] = df['Data da Coleta'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            df_export = df.fillna('').astype(str)
+            set_with_dataframe(worksheet, df_export, row=1, col=1, include_index=False, include_column_header=True)
+            print(f"Sucesso: {len(df)} linhas inseridas no Google Sheets (planilha nova): {spreadsheet_name} -> {worksheet_name}")
+            return
         
-        # 1. Limpar a planilha
-        print("Limpando planilha antiga...")
-        worksheet.clear()
+        # 1. Ler dados existentes da planilha
+        print("Lendo dados existentes da planilha...")
+        existing_records = worksheet.get_all_records()
         
-        # 2. Enviar o DataFrame completo (com cabeçalhos)
-        print(f"Enviando {len(df)} linhas calculadas para o Google Sheets...")
+        if not existing_records:
+            # Se a planilha está vazia (sem dados), envia tudo com cabeçalho
+            print("Planilha vazia. Enviando todos os dados com cabeçalho...")
+            df['Data da Coleta'] = df['Data da Coleta'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            df_export = df.fillna('').astype(str)
+            set_with_dataframe(worksheet, df_export, row=1, col=1, include_index=False, include_column_header=True)
+            print(f"Sucesso: {len(df)} linhas inseridas no Google Sheets: {spreadsheet_name} -> {worksheet_name}")
+            return
         
-        # Converte datetime para string, senão o gspread falha
-        df['Data da Coleta'] = df['Data da Coleta'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        # 2. Converter registros existentes em DataFrame
+        df_existing = pd.DataFrame(existing_records)
         
-        # Substitui valores nulos (NA) por strings vazias para o Gspread
-        df_export = df.fillna('').astype(str)
+        # 3. Normalizar 'Data da Coleta' para formato consistente (YYYY-MM-DD HH:MM:SS)
+        # Nos dados existentes
+        df_existing['Data da Coleta'] = pd.to_datetime(df_existing['Data da Coleta'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
         
-        set_with_dataframe(worksheet, df_export, row=1, col=1, include_index=False, include_column_header=True)
+        # Nos dados novos (df já tem datetime, converter para string)
+        df_new = df.copy()
+        df_new['Data da Coleta'] = df_new['Data da Coleta'].dt.strftime('%Y-%m-%d %H:%M:%S')
         
-        print(f"Sucesso: Dados SOBRESCRITOS no Google Sheets: {spreadsheet_name} -> {worksLheet_name}")
+        # 4. Criar chave única: 'ID do Produto' + '|' + 'Data da Coleta'
+        df_existing['_unique_key'] = df_existing['ID do Produto'].astype(str) + '|' + df_existing['Data da Coleta'].astype(str)
+        df_new['_unique_key'] = df_new['ID do Produto'].astype(str) + '|' + df_new['Data da Coleta'].astype(str)
+        
+        # 5. Filtrar apenas as linhas novas (que não existem na planilha)
+        existing_keys = set(df_existing['_unique_key'])
+        df_to_insert = df_new[~df_new['_unique_key'].isin(existing_keys)].copy()
+        
+        # Remover a coluna auxiliar '_unique_key'
+        df_to_insert = df_to_insert.drop(columns=['_unique_key'])
+        
+        if df_to_insert.empty:
+            print("Nenhuma nova linha para inserir. Todos os registros já existem na planilha.")
+            return
+        
+        print(f"Encontradas {len(df_to_insert)} novas linhas para inserir...")
+        
+        # 6. Garantir que a ordem das colunas está correta (igual ao cabeçalho existente)
+        existing_headers = worksheet.row_values(1)
+        
+        # Reordenar colunas do df_to_insert para corresponder aos headers existentes
+        df_to_insert = df_to_insert[existing_headers]
+        
+        # 7. Preparar dados para inserção (converter para strings e preencher NAs)
+        df_export = df_to_insert.fillna('').astype(str)
+        
+        # 8. Inserir novas linhas abaixo do cabeçalho (linha 2) para manter os mais novos no topo
+        # Usar insert_rows para inserir múltiplas linhas de uma vez
+        values_to_insert = df_export.values.tolist()
+        
+        # Inserir todas as linhas de uma vez na posição 2 (abaixo do cabeçalho)
+        worksheet.insert_rows(values_to_insert, row=2)
+        
+        print(f"Sucesso: {len(df_to_insert)} novas linhas inseridas no Google Sheets: {spreadsheet_name} -> {worksheet_name}")
         
     except Exception as e:
-        print(f"ERRO ao sobrescrever o Google Sheets: {e}")
+        print(f"ERRO ao atualizar o Google Sheets: {e}")
 
 def export_to_sql(df, db_name, table_name):
     """(O run_auto.bat já deletou o DB) Recria o DB com os dados completos."""
