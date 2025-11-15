@@ -94,6 +94,7 @@ def calculate_sales(df):
     
     # 5. Reordenar colunas
     colunas_finais = [
+        'Número Item',
         'Data da Coleta',
         'Produto',
         'Preço',
@@ -120,11 +121,20 @@ def calculate_sales(df):
     if 'Qtd. Vendida' not in df.columns:
         df['Qtd. Vendida'] = 0
     
+    # Adicionar coluna Número Item se não existir
+    if 'Número Item' not in df.columns:
+        df['Número Item'] = pd.NA
+    
     # Reordenar e filtrar colunas
     df = df.reindex(columns=colunas_finais, fill_value='')
     
-    # 6. Ordenar por data (mais novos primeiro)
-    df.sort_values(by=['Data da Coleta'], ascending=False, inplace=True)
+    # 6. Ordenar por data (novos no topo) e numerar por dia
+    print("Ordenando por data (novos no topo) e numerando por dia...")
+    df['__Dia'] = df['Data da Coleta'].dt.date
+    df.sort_values(by=['__Dia', 'Data da Coleta'], ascending=[False, False], inplace=True)
+    df['Número Item'] = df.groupby('__Dia').cumcount() + 1
+    df['Número Item'] = df['Número Item'].astype('Int64')
+    df = df.drop(columns=['__Dia'])
     
     print("Cálculos concluídos.")
     return df

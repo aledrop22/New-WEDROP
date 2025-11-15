@@ -13,7 +13,11 @@ ROBOTSTXT_OBEY = False
 
 # Concorrência (MODO LENTO E SEGURO)
 CONCURRENT_REQUESTS_PER_DOMAIN = 1
-DOWNLOAD_DELAY = 1
+DOWNLOAD_DELAY = 1.5
+
+# Timeouts globais para evitar travamentos
+DOWNLOAD_TIMEOUT = 180  # 3 minutos máximo por requisição
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000  # 30 segundos para navegação
 
 # Pipeline (desativada, o que é o correto)
 ITEM_PIPELINES = {
@@ -35,4 +39,4 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
     "headless": True
 }
 
-PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 2
+PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 3

@@ -20,6 +20,7 @@ def clean_text(text):
 
 class ProductItem(scrapy.Item):
     # Campos que o scraper irá coletar
+    item_number = scrapy.Field(output_processor=TakeFirst())
     title = scrapy.Field(output_processor=TakeFirst())
     price = scrapy.Field(output_processor=TakeFirst())
     stock = scrapy.Field(output_processor=TakeFirst())
@@ -249,11 +250,24 @@ class MeudropSpider(scrapy.Spider):
             self.log(f"AVISO: Nenhuma tag encontrada (ou timeout) em {response.url}.")
             pass 
 
-        page_content = await page.content()
-        await page.close()
+        # Proteger page.content() com timeout para evitar travamento
+        try:
+            page_content = await page.content()
+        except Exception as e:
+            self.log(f"ERRO ao obter conteúdo da página {response.url}: {e}")
+            page_content = await page.evaluate("() => document.documentElement.outerHTML")
+        
+        # Fechar página com proteção contra erros de shutdown
+        try:
+            await page.close()
+        except Exception as e:
+            self.log(f"AVISO: Não foi possível fechar a página 'zumbi'. {e}", level=logging.WARNING)
 
         selector = Selector(text=page_content)
         loader = ItemLoader(item=ProductItem(), selector=selector)
+        
+        # Campo para numeração (será preenchido no data_export.py)
+        loader.add_value('item_number', None)
         
         now = datetime.datetime.now()
         timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")

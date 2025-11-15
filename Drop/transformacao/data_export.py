@@ -28,7 +28,13 @@ def load_new_data(file_path):
         return None
 
     try:
-        df_novo = pd.read_json(json_path, lines=True)
+        # Tenta primeiro como JSON padrão (array). Se falhar, tenta como JSON Lines.
+        try:
+            df_novo = pd.read_json(json_path)
+            print("Formato detectado: JSON em array.")
+        except ValueError:
+            df_novo = pd.read_json(json_path, lines=True)
+            print("Formato detectado: JSON Lines (um objeto por linha).")
         if df_novo.empty:
             print("ERRO: data.json está vazio.")
             return None
@@ -38,6 +44,7 @@ def load_new_data(file_path):
 
     # Renomeia colunas para o padrão final
     column_map = {
+        'item_number': 'Número Item',
         'title': 'Produto',
         'price': 'Preço',
         'stock': 'Estoque',
@@ -102,7 +109,9 @@ def calculate_sales(df):
     df = df.drop(columns=['Data_Pura'])
 
     # 5. Reordenar colunas para o formato final (Removidas as colunas Vendas_Dia e Entradas_Dia)
+    # Incluímos possível coluna de numeração se ela existir (será recriada depois se ausente)
     colunas_finais = [
+        'Número Item',  # nome padrão interno para numeração (será mapeado ao cabeçalho existente se houver)
         'Data da Coleta',
         'Produto',
         'Preço',
@@ -118,14 +127,52 @@ def calculate_sales(df):
         if col not in df.columns:
             df[col] = pd.NA
 
+    # Se a coluna 'Número Item' não existir (novos dados), cria vazia para tratar depois
+    if 'Número Item' not in df.columns:
+        df['Número Item'] = pd.NA
+
     df = df[colunas_finais]
 
-    # 6. Reordenar o DataFrame final pela Data da Coleta (mais novos no topo)
-    print("Reordenando o DataFrame final por data...")
-    df.sort_values(by='Data da Coleta', ascending=False, inplace=True)
+    # 6. Ordenar por data (mais novos no topo) e numerar por dia
+    print("Ordenando por data (novos no topo) e numerando por dia...")
+    # Cria coluna de dia para agrupar
+    df['__Dia'] = df['Data da Coleta'].dt.date
+    # Ordena por dia (desc) e mantém ordem de chegada dentro do dia
+    df.sort_values(by=['__Dia', 'Data da Coleta'], ascending=[False, False], inplace=True)
+    # Numeração sequencial por dia
+    df['Número Item'] = df.groupby('__Dia').cumcount() + 1
+    df['Número Item'] = df['Número Item'].astype('Int64')
+    # Limpa coluna auxiliar
+    df = df.drop(columns=['__Dia'])
 
     print("Processamento concluído.")
     return df
+
+def rewrite_complete_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
+    """Reescreve completamente a planilha com todos os dados e numeração correta."""
+    try:
+        gc = gspread.service_account(filename=creds_file)
+        sh = gc.open(spreadsheet_name)
+        
+        try:
+            worksheet = sh.worksheet(worksheet_name)
+            # Limpa todo o conteúdo
+            worksheet.clear()
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = sh.add_worksheet(title=worksheet_name, rows=1, cols=len(df.columns))
+        
+        # Prepara dados para exportação
+        df_export = df.copy()
+        df_export['Data da Coleta'] = pd.to_datetime(df_export['Data da Coleta']).dt.strftime('%Y-%m-%d %H:%M:%S')
+        df_export = df_export.fillna('').astype(str)
+        
+        # Escreve tudo de uma vez
+        set_with_dataframe(worksheet, df_export, row=1, col=1, include_index=False, include_column_header=True)
+        print(f"✅ Sucesso: Planilha completamente reescrita com {len(df)} linhas e numeração correta!")
+        print(f"📊 Google Sheets: {spreadsheet_name} -> {worksheet_name}")
+        
+    except Exception as e:
+        print(f"❌ ERRO ao reescrever o Google Sheets: {e}")
 
 def overwrite_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
     """Atualiza a planilha sem apagar dados antigos: insere somente linhas novas logo abaixo do cabeçalho (topo)."""
@@ -188,6 +235,51 @@ def overwrite_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
             print("Cabeçalhos criados e dados adicionados.")
             return
 
+        # Detecta nome real da coluna de numeração na planilha (caso diferente de 'Número Item')
+        numero_header_candidates = ['Número Item', 'Numero Item', 'Nº Item', 'Item', '#']
+        numero_col_header = None
+        for cand in numero_header_candidates:
+            if any(h.strip().lower() == cand.lower() for h in headers):
+                numero_col_header = next(h for h in headers if h.strip().lower() == cand.lower())
+                break
+        
+        print(f"DEBUG: Cabeçalho de numeração detectado na planilha: '{numero_col_header}'")
+        print(f"DEBUG: Colunas em rows_to_add_df: {list(rows_to_add_df.columns)}")
+
+        # Garante que rows_to_add_df tenha a coluna de numeração com o nome correto
+        if numero_col_header:
+            # Se existe 'Número Item' nos novos dados, renomeia para o nome do cabeçalho da planilha
+            if 'Número Item' in rows_to_add_df.columns and numero_col_header != 'Número Item':
+                rows_to_add_df.rename(columns={'Número Item': numero_col_header}, inplace=True)
+                print(f"DEBUG: Coluna 'Número Item' renomeada para '{numero_col_header}'")
+            elif numero_col_header not in rows_to_add_df.columns:
+                # Cria a coluna vazia com o nome correto
+                rows_to_add_df[numero_col_header] = pd.NA
+                print(f"DEBUG: Coluna '{numero_col_header}' criada vazia")
+
+            # Continua a sequência numérica da planilha existente
+            if numero_col_header in df_existing.columns:
+                try:
+                    existing_num = pd.to_numeric(df_existing[numero_col_header], errors='coerce')
+                    max_num = existing_num.max() if not existing_num.dropna().empty else 0
+                    print(f"DEBUG: Número máximo existente na planilha: {max_num}")
+                except Exception as e:
+                    max_num = 0
+                    print(f"DEBUG: Erro ao calcular max_num, usando 0: {e}")
+                
+                # Atribuir números sequenciais a TODAS as linhas novas
+                num_new_rows = len(rows_to_add_df)
+                seq = range(int(max_num) + 1, int(max_num) + 1 + num_new_rows)
+                rows_to_add_df[numero_col_header] = list(seq)
+                print(f"DEBUG: {num_new_rows} linhas novas numeradas de {int(max_num) + 1} até {int(max_num) + num_new_rows}")
+        else:
+            print("DEBUG: Nenhuma coluna de numeração detectada na planilha")
+
+        # Formata Data da Coleta para string consistente antes de montar as linhas
+        if 'Data da Coleta' in rows_to_add_df.columns:
+            rows_to_add_df['Data da Coleta'] = pd.to_datetime(rows_to_add_df['Data da Coleta'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+
+        # Construção das linhas na ordem dos headers
         rows = []
         for _, r in rows_to_add_df.iterrows():
             row = []
@@ -222,6 +314,11 @@ if __name__ == '__main__':
     # Garante que estamos no diretório certo (pasta 'transformacao')
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
+    # Verifica se foi passado argumento para reescrever completamente
+    import sys
+    # Por padrão reescreve a planilha (garante renumeração por dia). Use --incremental para só inserir novas linhas.
+    force_rewrite = ('--rewrite' in sys.argv or '--force' in sys.argv) or ('--incremental' not in sys.argv)
+
     # 1. Carregar dados novos
     df_novos_produtos = load_new_data(INPUT_JSON_FILE)
 
@@ -240,11 +337,18 @@ if __name__ == '__main__':
     df_total_combinado = pd.concat([df_historico, df_novos_produtos], ignore_index=True)
     df_final_calculado = calculate_sales(df_total_combinado)
 
-    # 4. Atualizar (sem apagar) Google Sheets
-    overwrite_google_sheet(df_final_calculado, GOOGLE_CREDS_FILE, SPREADSHEET_NAME, WORKSHEET_NAME)
+    # 4. Atualizar Google Sheets
+    if force_rewrite:
+        print("\n🔄 MODO: Reescrita completa da planilha (--rewrite/--force)")
+        rewrite_complete_google_sheet(df_final_calculado, GOOGLE_CREDS_FILE, SPREADSHEET_NAME, WORKSHEET_NAME)
+    else:
+        print("\n📝 MODO: Atualização incremental (adiciona apenas linhas novas)")
+        print("   💡 Use 'python data_export.py --rewrite' para reescrever toda a planilha")
+        overwrite_google_sheet(df_final_calculado, GOOGLE_CREDS_FILE, SPREADSHEET_NAME, WORKSHEET_NAME)
 
-    # 5. Sobrescrever SQL (O .bat já deletou o arquivo antigo)
+    # 5. Exportar para SQLite
     export_to_sql(df_final_calculado, DB_NAME, TABLE_NAME)
 
+    # 6. Exibir preview dos dados
     print("\n--- Primeiras linhas do DataFrame (Pronto para Anexar) ---")
     print(df_final_calculado.head())
