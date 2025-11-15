@@ -204,6 +204,7 @@ def overwrite_google_sheet(df, creds_file, spreadsheet_name, worksheet_name):
 
     except Exception as e:
         print(f"ERRO ao atualizar o Google Sheets: {e}")
+        print(f"ERRO ao atualizar o Google Sheets: {e}")
 
 def export_to_sql(df, db_name, table_name):
     """(O run_auto.bat já deletou o DB) Recria o DB com os dados completos."""
