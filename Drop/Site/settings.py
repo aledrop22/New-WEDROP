@@ -11,17 +11,19 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
-# Concorrência (MODO LENTO E SEGURO)
-CONCURRENT_REQUESTS_PER_DOMAIN = 1
-DOWNLOAD_DELAY = 1
+# Concorrência (MODO ESTÁVEL PARA WINDOWS)
+CONCURRENT_REQUESTS_PER_DOMAIN = 1  # Estável: 1 requisição por domínio
+CONCURRENT_REQUESTS = 2  # Estável: 2 requisições simultâneas no total
+DOWNLOAD_DELAY = 1.0  # Estável: 1s entre requisições
 
 # Timeouts globais para evitar travamentos
-DOWNLOAD_TIMEOUT = 180  # 3 minutos máximo por requisição
-PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000  # 30 segundos para navegação
+DOWNLOAD_TIMEOUT = 90
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 20000
+PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 60000
 
-# Pipeline (desativada, o que é o correto)
+# Pipelines
 ITEM_PIPELINES = {
-   # 'Site.pipelines.GoogleSheetsBatchPipeline': 300,
+    'Site.pipelines.SplitStockPipeline': 200,
 }
 
 FEED_EXPORT_ENCODING = "utf-8"
@@ -36,7 +38,23 @@ TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 
 # --- OPÇÕES DO NAVEGADOR (VERSÃO ESTÁVEL) ---
 PLAYWRIGHT_LAUNCH_OPTIONS = {
-    "headless": True
+    "headless": True,
+    "args": [
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
+        "--disable-software-rasterizer",
+        "--disable-extensions",
+    ],
+    "timeout": 60000,
 }
 
-PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 2
+# Limita concorrência para evitar sobrecarga (ESTÁVEL)
+PLAYWRIGHT_MAX_CONTEXTS = 1  # Estável: 1 contexto simultâneo
+PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 1  # Estável: 1 página por contexto
+
+# Configurações adicionais para estabilidade e performance
+PLAYWRIGHT_ABORT_REQUEST = lambda req: req.resource_type in ["image", "media", "font", "stylesheet"] or (
+    req.resource_type == "script" and any(x in req.url for x in ["analytics", "google-analytics", "facebook", "doubleclick", "ads"])
+)

@@ -12,9 +12,45 @@ class SitePipeline:
     def process_item(self, item, spider):
         return item
 
+import json
+import os
 
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+class SplitStockPipeline:
+    def __init__(self):
+        self.instock_file = None
+        self.outofstock_file = None
+
+    def open_spider(self, spider):
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        instock_path = os.path.join(base_dir, 'data_instock.json')
+        outofstock_path = os.path.join(base_dir, 'data_outofstock.json')
+        # Usar JSON lines para escrita incremental
+        self.instock_file = open(instock_path, 'w', encoding='utf-8')
+        self.outofstock_file = open(outofstock_path, 'w', encoding='utf-8')
+
+    def close_spider(self, spider):
+        if self.instock_file:
+            self.instock_file.close()
+        if self.outofstock_file:
+            self.outofstock_file.close()
+
+    def process_item(self, item, spider):
+        try:
+            stock_str = str(item.get('stock', '0') or '0')
+            stock_val = 0
+            try:
+                stock_val = int(stock_str)
+            except Exception:
+                stock_val = 0
+
+            target = self.instock_file if stock_val > 0 else self.outofstock_file
+            target.write(json.dumps(item, ensure_ascii=False) + "\n")
+        except Exception:
+            # Em caso de erro, apenas segue sem interromper o fluxo
+            pass
+        return item
+
+
 import logging
 
 class GoogleSheetsBatchPipeline:
@@ -43,6 +79,9 @@ class GoogleSheetsBatchPipeline:
     def open_spider(self, spider):
         # Esta função é executada UMA VEZ quando o robô inicia
         try:
+            # Importa dependências apenas quando necessário, evitando erro se não instaladas
+            import gspread
+            from oauth2client.service_account import ServiceAccountCredentials
             # Autenticação
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
             creds = ServiceAccountCredentials.from_json_keyfile_name(self.google_creds_file, scope)

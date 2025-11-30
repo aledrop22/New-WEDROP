@@ -6,8 +6,9 @@ from scrapy.loader import ItemLoader
 from itemloaders.processors import TakeFirst, MapCompose
 import time
 import os
-import datetime # Adicionado para o timestamp
-import logging  # Adicionado para logar retentativas
+import datetime
+import logging
+import asyncio  # Para controle de timeout
 
 SITE_HOST = "meudropbrasil.com"
 STORAGE_STATE_FILE = 'storage_state.json' # Para carregar o estado completo
@@ -34,11 +35,6 @@ class MeudropSpider(scrapy.Spider):
     name = "meudrop"
     allowed_domains = [SITE_HOST]
     start_urls = [f"https://{SITE_HOST}/loja/"]
-
-    # Bloqueia recursos desnecessários (mantém o CSS para a lógica de 'strike' funcionar)
-    custom_settings = {
-        'PLAYWRIGHT_ABORT_REQUEST': lambda r: r.resource_type in ("image", "media", "font"),
-    }
     
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -93,10 +89,10 @@ class MeudropSpider(scrapy.Spider):
             
             try:
                 self.log(f"Esperando por tags 'Mais Vendido' (JS)...")
-                await page.wait_for_selector("div.tag-vendas-produto", timeout=3000)
+                await page.wait_for_selector("div.tag-vendas-produto", timeout=800)  # Otimizado para 800ms
                 self.log(f"Tags 'Mais Vendido' encontradas.")
             except Exception:
-                self.log(f"AVISO: Nenhuma tag 'Mais Vendido' encontrada apos 3s (Pagina {self.page_count}).")
+                self.log(f"AVISO: Nenhuma tag 'Mais Vendido' encontrada apos 800ms (Pagina {self.page_count}).")
 
             page_content = await page.content()
             selector = Selector(text=page_content)
@@ -114,7 +110,6 @@ class MeudropSpider(scrapy.Spider):
         storage_state = self.storage_state
         
         zero_stock_counter = 0
-        stop_pagination = False 
         
         for product_count, product in enumerate(products, 1):
             
@@ -147,11 +142,8 @@ class MeudropSpider(scrapy.Spider):
                         playwright_context_kwargs={'storage_state': storage_state}, # Injeta o login
                         playwright_page_goto_kwargs=dict(
                             wait_until="domcontentloaded",
-                            timeout=30000 # <-- Reduzido para 30s
+                            timeout=20000 # Otimizado para 20s
                         ),
-                        playwright_page_methods=[
-                            PageMethod("wait_for_timeout", 1000), 
-                        ],
                         playwright_include_page=True,
                         product_index=product_count,
                         is_retry=False
@@ -168,18 +160,14 @@ class MeudropSpider(scrapy.Spider):
             if zero_stock_counter >= 3:
                 self.log("="*50)
                 self.log(f"3 PRODUTOS CONSECUTIVOS COM ESTOQUE ZERO ENCONTRADOS.")
-                self.log(f"INTERROMPENDO A RASPAGEM DA LOJA.")
+                self.log(f"Continuando raspagem: regra de interrupcao desativada.")
                 self.log("="*50)
-                stop_pagination = True 
-                break 
+                # Não interrompe mais; apenas registra e segue
         
         # --- LÓGICA DE PAGINAÇÃO (REATIVADA) ---
         self.log(f"Procurando pela proxima pagina (botao 'next')...")
         
-        if stop_pagination:
-            self.log("PAGINAÇÃO INTERROMPIDA DEVIDO A REGRA DE ESTOQUE ZERO.")
-            await page.close()
-            return 
+        # Regra de interrupção por estoque zero removida
 
         seletor_proxima_pagina = 'a.next.page-numbers::attr(href)'
         next_page_url = selector.css(seletor_proxima_pagina).get()
@@ -200,7 +188,7 @@ class MeudropSpider(scrapy.Spider):
                     playwright_context_kwargs={'storage_state': self.storage_state}, # Injeta o login
                     playwright_page_goto_kwargs=dict(
                         wait_until="domcontentloaded",
-                        timeout=30000 # <-- Reduzido para 30s
+                        timeout=20000 # Reduzido para 20s para evitar travamentos
                     ),
                     playwright_page_methods=[
                         PageMethod("wait_for_selector", "ul.products", timeout=10000)
@@ -228,7 +216,7 @@ class MeudropSpider(scrapy.Spider):
         try:
             await page.wait_for_selector(
                 "p.price, button[name='add-to-cart']", 
-                timeout=10000
+                timeout=5000  # Otimizado para 5s - DOM já carregado
             ) 
         except Exception:
             self.log(f"ERRO CRITICO: Nao foi possivel encontrar 'p.price' ou 'add-to-cart' em {response.url}. O Cookie pode ter EXPIRADO.", level=logging.ERROR)
@@ -239,7 +227,7 @@ class MeudropSpider(scrapy.Spider):
         tags_list = []
         try:
             tag_locators = page.locator('span.tagged_as span.detail-content a')
-            await tag_locators.first.wait_for(timeout=3000) 
+            await tag_locators.first.wait_for(timeout=2000)  # Reduzido para 2s
             
             for tag in await tag_locators.all():
                 tag_text = await tag.text_content()
@@ -252,14 +240,19 @@ class MeudropSpider(scrapy.Spider):
 
         # Proteger page.content() com timeout para evitar travamento
         try:
-            page_content = await page.content()
+            page_content = await asyncio.wait_for(page.content(), timeout=5.0)
+        except asyncio.TimeoutError:
+            self.log(f"ERRO: Timeout ao obter conteúdo da página {response.url}. Usando fallback.")
+            page_content = await page.evaluate("() => document.documentElement.outerHTML")
         except Exception as e:
             self.log(f"ERRO ao obter conteúdo da página {response.url}: {e}")
             page_content = await page.evaluate("() => document.documentElement.outerHTML")
         
         # Fechar página com proteção contra erros de shutdown
         try:
-            await page.close()
+            await asyncio.wait_for(page.close(), timeout=3.0)
+        except asyncio.TimeoutError:
+            self.log(f"AVISO: Timeout ao fechar página {response.url}. Página 'zumbi'.", level=logging.WARNING)
         except Exception as e:
             self.log(f"AVISO: Não foi possível fechar a página 'zumbi'. {e}", level=logging.WARNING)
 
@@ -326,8 +319,10 @@ class MeudropSpider(scrapy.Spider):
         page = failure.request.meta.get("playwright_page")
         if page:
             try:
-                await page.close()
+                await asyncio.wait_for(page.close(), timeout=3.0)
                 self.log(f"Página 'zumbi' (Timeout?) em {url} foi fechada.", level=logging.INFO)
+            except asyncio.TimeoutError:
+                self.log(f"Timeout ao fechar página 'zumbi' em {url}.", level=logging.WARNING)
             except Exception as e:
                 self.log(f"Não foi possível fechar a página 'zumbi'. {e}", level=logging.WARNING)
         # --- FIM DA CORREÇÃO ---
