@@ -52,7 +52,23 @@ def load_new_data(file_path):
         'numero_vendas': 'Qtd. Vendida',
         'product_id': 'ID do Produto',
         'url': 'URL',
-        'scrape_time': 'Data da Coleta'
+        'scrape_time': 'Data da Coleta',
+        'ncm': 'NCM',
+        'altura': 'Altura',
+        'largura': 'Largura',
+        'comprimento': 'Comprimento',
+        'profundidade': 'Profundidade',
+        'peso': 'Peso',
+        'altura_sem_embalagem': 'Altura (sem embalagem)',
+        'largura_sem_embalagem': 'Largura (sem embalagem)',
+        'comprimento_sem_embalagem': 'Comprimento (sem embalagem)',
+        'profundidade_sem_embalagem': 'Profundidade (sem embalagem)',
+        'peso_sem_embalagem': 'Peso (sem embalagem)',
+        'altura_com_embalagem': 'Altura (com embalagem)',
+        'largura_com_embalagem': 'Largura (com embalagem)',
+        'comprimento_com_embalagem': 'Comprimento (com embalagem)',
+        'profundidade_com_embalagem': 'Profundidade (com embalagem)',
+        'peso_com_embalagem': 'Peso (com embalagem)'
     }
     df_novo.rename(columns=column_map, inplace=True)
 
@@ -108,10 +124,9 @@ def calculate_sales(df):
     # 4. Limpar colunas auxiliares
     df = df.drop(columns=['Data_Pura'])
 
-    # 5. Reordenar colunas para o formato final (Removidas as colunas Vendas_Dia e Entradas_Dia)
-    # Incluímos possível coluna de numeração se ela existir (será recriada depois se ausente)
+    # 5. Reordenar colunas para o formato final (Dimensões APÓS URL como solicitado)
     colunas_finais = [
-        'Número Item',  # nome padrão interno para numeração (será mapeado ao cabeçalho existente se houver)
+        'Número Item',
         'Data da Coleta',
         'Produto',
         'Preço',
@@ -119,7 +134,23 @@ def calculate_sales(df):
         'Liquidação',
         'Qtd. Vendida',
         'ID do Produto',
-        'URL'
+        'URL',
+        'NCM',
+        'Altura',
+        'Largura',
+        'Comprimento',
+        'Profundidade',
+        'Peso',
+        'Altura (sem embalagem)',
+        'Largura (sem embalagem)',
+        'Comprimento (sem embalagem)',
+        'Profundidade (sem embalagem)',
+        'Peso (sem embalagem)',
+        'Altura (com embalagem)',
+        'Largura (com embalagem)',
+        'Comprimento (com embalagem)',
+        'Profundidade (com embalagem)',
+        'Peso (com embalagem)'
     ]
 
     # Garante que todas as colunas existam

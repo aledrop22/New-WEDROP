@@ -30,6 +30,22 @@ class ProductItem(scrapy.Item):
     scrape_time = scrapy.Field(output_processor=TakeFirst()) 
     status_liquidacao = scrapy.Field(output_processor=TakeFirst())
     numero_vendas = scrapy.Field(output_processor=TakeFirst())
+    ncm = scrapy.Field(output_processor=TakeFirst())
+    altura = scrapy.Field(output_processor=TakeFirst())
+    largura = scrapy.Field(output_processor=TakeFirst())
+    comprimento = scrapy.Field(output_processor=TakeFirst())
+    profundidade = scrapy.Field(output_processor=TakeFirst())
+    peso = scrapy.Field(output_processor=TakeFirst())
+    altura_sem_embalagem = scrapy.Field(output_processor=TakeFirst())
+    largura_sem_embalagem = scrapy.Field(output_processor=TakeFirst())
+    comprimento_sem_embalagem = scrapy.Field(output_processor=TakeFirst())
+    profundidade_sem_embalagem = scrapy.Field(output_processor=TakeFirst())
+    peso_sem_embalagem = scrapy.Field(output_processor=TakeFirst())
+    altura_com_embalagem = scrapy.Field(output_processor=TakeFirst())
+    largura_com_embalagem = scrapy.Field(output_processor=TakeFirst())
+    comprimento_com_embalagem = scrapy.Field(output_processor=TakeFirst())
+    profundidade_com_embalagem = scrapy.Field(output_processor=TakeFirst())
+    peso_com_embalagem = scrapy.Field(output_processor=TakeFirst())
 
 class MeudropSpider(scrapy.Spider):
     name = "meudrop"
@@ -209,14 +225,14 @@ class MeudropSpider(scrapy.Spider):
         
         try: # Tenta fechar o pop-up "Entendido"
             await page.evaluate("() => { const button = document.querySelector('button#webbex-arp-entendido'); if (button) { button.click(); } }")
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(200)  # Reduzido de 500ms para 200ms
         except Exception: pass
 
         # --- ESPERA PELO PREÇO (PROVA DE LOGIN) ---
         try:
             await page.wait_for_selector(
                 "p.price, button[name='add-to-cart']", 
-                timeout=5000  # Otimizado para 5s - DOM já carregado
+                timeout=3000  # Reduzido de 5s para 3s
             ) 
         except Exception:
             self.log(f"ERRO CRITICO: Nao foi possivel encontrar 'p.price' ou 'add-to-cart' em {response.url}. O Cookie pode ter EXPIRADO.", level=logging.ERROR)
@@ -227,7 +243,7 @@ class MeudropSpider(scrapy.Spider):
         tags_list = []
         try:
             tag_locators = page.locator('span.tagged_as span.detail-content a')
-            await tag_locators.first.wait_for(timeout=2000)  # Reduzido para 2s
+            await tag_locators.first.wait_for(timeout=1000)  # Reduzido para 1s
             
             for tag in await tag_locators.all():
                 tag_text = await tag.text_content()
@@ -240,7 +256,7 @@ class MeudropSpider(scrapy.Spider):
 
         # Proteger page.content() com timeout para evitar travamento
         try:
-            page_content = await asyncio.wait_for(page.content(), timeout=5.0)
+            page_content = await asyncio.wait_for(page.content(), timeout=3.0)  # Reduzido de 5.0 para 3.0
         except asyncio.TimeoutError:
             self.log(f"ERRO: Timeout ao obter conteúdo da página {response.url}. Usando fallback.")
             page_content = await page.evaluate("() => document.documentElement.outerHTML")
@@ -250,7 +266,7 @@ class MeudropSpider(scrapy.Spider):
         
         # Fechar página com proteção contra erros de shutdown
         try:
-            await asyncio.wait_for(page.close(), timeout=3.0)
+            await asyncio.wait_for(page.close(), timeout=1.5)  # Reduzido de 3.0 para 1.5
         except asyncio.TimeoutError:
             self.log(f"AVISO: Timeout ao fechar página {response.url}. Página 'zumbi'.", level=logging.WARNING)
         except Exception as e:
@@ -280,7 +296,14 @@ class MeudropSpider(scrapy.Spider):
                         if re.match(r'^\d+\.\d{2}$', cleaned_price) or re.match(r'^\d+$', cleaned_price.split('.')[0]):
                                 price = cleaned_price
                                 break
-        loader.add_value('price', price if price else '0.00')
+        # Formatar price: remover zeros desnecessários
+        if price:
+            price_float = float(price)
+            if price_float == int(price_float):
+                price = str(int(price_float))
+            else:
+                price = f"{price_float:.2f}".rstrip('0').rstrip('.')
+        loader.add_value('price', price if price else '0')
         if not price: self.log(f"AVISO: Preço nao encontrado em {response.url}.") 
 
         stock_raw = selector.css('p.stock::text').get()
@@ -290,6 +313,154 @@ class MeudropSpider(scrapy.Spider):
             if stock_match: stock = stock_match.group(0)
             elif 'em estoque' in stock_raw.lower() or 'in stock' in stock_raw.lower(): stock = '1'
         loader.add_value('stock', stock)
+
+        # Extrair descrição PRIMEIRO (antes de usar em outras buscas)
+        desc_nodes = selector.css('div.woocommerce-product-details__short-description, div#tab-description, div.woocommerce-Tabs-panel--description, div.product .entry-content').xpath('.//text()').getall()
+        desc_text = " ".join([clean_text(t) for t in desc_nodes if clean_text(t)]) if desc_nodes else ""
+
+        ncm_value = None
+        ncm_nodes = selector.xpath("//li[p[strong[contains(translate(., 'ncm', 'NCM'), 'NCM')]]]/p//text()" ).getall()
+        if not ncm_nodes:
+            ncm_nodes = selector.xpath("//p[strong[contains(translate(., 'ncm', 'NCM'), 'NCM')]]//text()").getall()
+        if ncm_nodes:
+            ncm_text = " ".join([clean_text(t) for t in ncm_nodes if clean_text(t)])
+            ncm_match = re.search(r'(\d{4}\.?\d{2}\.?\d{2}|\d{2}\.?\d{2}\.?\d{2}\.?\d{2}|\d{8})', ncm_text)
+            if ncm_match:
+                ncm_value = ncm_match.group(1)
+        
+        if not ncm_value:
+            ncm_strong_nodes = selector.xpath("//p[contains(text(), 'NCM')]//strong//text()").getall()
+            if ncm_strong_nodes:
+                for strong_text in ncm_strong_nodes:
+                    strong_clean = clean_text(strong_text)
+                    if strong_clean and re.match(r'^\d{4}\.?\d{2}\.?\d{2}', strong_clean):
+                        ncm_value = strong_clean
+                        break
+        
+        if not ncm_value and desc_text:
+            ncm_desc_match = re.search(r'NCM\s*:\s*(\d{4}\.?\d{2}\.?\d{2}|\d{2}\.?\d{2}\.?\d{2}\.?\d{2}|\d{8})', desc_text, flags=re.I)
+            if ncm_desc_match:
+                ncm_value = ncm_desc_match.group(1)
+        
+        # Remover pontos do NCM
+        if ncm_value:
+            ncm_value = ncm_value.replace('.', '')
+        loader.add_value('ncm', ncm_value or '')
+
+        def convert_weight(raw, unit):
+            unit_l = unit.lower()
+            if unit_l == 'g':
+                try:
+                    return str(float(raw.replace(',', '.')) / 1000)
+                except Exception:
+                    return raw
+            return raw
+
+        def extract_measure(label_list):
+            for label in label_list:
+                xpath = f"//li[p[strong[contains(translate(., '{label.lower()}', '{label.upper()}'), '{label.upper()}')]]]/p//text()"
+                nodes = selector.xpath(xpath).getall()
+                if not nodes:
+                    xpath = f"//p[strong[contains(translate(., '{label.lower()}', '{label.upper()}'), '{label.upper()}')]]//text()"
+                    nodes = selector.xpath(xpath).getall()
+                if nodes:
+                    text_joined = " ".join([clean_text(t) for t in nodes if clean_text(t)])
+                    cleaned = re.sub(rf"{label}\s*:\s*", "", text_joined, flags=re.I)
+                    match = re.search(r"(\d+[\.,]?\d*)", cleaned)
+                    if match:
+                        return match.group(1)
+                    return cleaned or None
+            return None
+
+        altura_val = extract_measure(['ALTURA'])
+        largura_val = extract_measure(['LARGURA'])
+        comprimento_val = extract_measure(['COMPRIMENTO'])
+        profundidade_val = extract_measure(['PROFUNDIDADE'])
+        peso_val = extract_measure(['PESO'])
+
+        if not altura_val or not largura_val or not profundidade_val:
+            dims_label_nodes = selector.xpath("//p[strong[contains(translate(., 'dimensões', 'DIMENSÕES'), 'DIMENSÕES')]]//text()").getall()
+            if dims_label_nodes:
+                dims_label_text = " ".join([clean_text(t) for t in dims_label_nodes if clean_text(t)])
+                dims_label_match = re.search(r"(\d+[\.,]?\d*)\s*(cm|mm|m)?\s*[xX]\s*(\d+[\.,]?\d*)\s*(cm|mm|m)?\s*[xX]\s*(\d+[\.,]?\d*)\s*(cm|mm|m)?", dims_label_text)
+                if dims_label_match:
+                    altura_val = altura_val or dims_label_match.group(1)
+                    largura_val = largura_val or dims_label_match.group(3)
+                    profundidade_val = profundidade_val or dims_label_match.group(5)
+                    if not comprimento_val:
+                        comprimento_val = profundidade_val
+
+        if not altura_val or not largura_val or not profundidade_val:
+            dims_abrev_nodes = selector.xpath("//p[contains(translate(., 'dimensões', 'DIMENSÕES'), 'DIMENSÕES')]//text()").getall()
+            if dims_abrev_nodes:
+                dims_abrev_text = " ".join([clean_text(t) for t in dims_abrev_nodes if clean_text(t)])
+                dims_abrev_matches = re.findall(r"(\d+[\.,]?\d*)\s*(cm|mm)?\s*\(([ALCP])\)", dims_abrev_text, flags=re.I)
+                if dims_abrev_matches:
+                    dims_dict = {}
+                    for val, unit, label in dims_abrev_matches:
+                        dims_dict[label.upper()] = val
+                    altura_val = altura_val or dims_dict.get('A')
+                    largura_val = largura_val or dims_dict.get('L')
+                    comprimento_val = comprimento_val or dims_dict.get('C') or dims_dict.get('P')
+                    profundidade_val = profundidade_val or dims_dict.get('P') or dims_dict.get('C')
+
+        if (not altura_val or not largura_val or not profundidade_val) and desc_text:
+            dims_match = re.search(r"(\d+[\.,]?\d*)\s*[xX]\s*(\d+[\.,]?\d*)\s*[xX]\s*(\d+[\.,]?\d*)\s*(mm|cm|m)?", desc_text)
+            if dims_match:
+                altura_val = altura_val or dims_match.group(1)
+                largura_val = largura_val or dims_match.group(2)
+                profundidade_val = profundidade_val or dims_match.group(3)
+                if not comprimento_val:
+                    comprimento_val = profundidade_val
+
+        if not peso_val and desc_text:
+            peso_match = re.search(r"peso[^\d]{0,20}(\d+[\.,]?\d*)\s*(kg|g)", desc_text, flags=re.I)
+            if peso_match:
+                peso_raw = peso_match.group(1)
+                unit = peso_match.group(2)
+                peso_val = convert_weight(peso_raw, unit)
+
+        sem_emb_dims = re.search(r"sem embalagem[^\n]*?(\d+[\.,]?\d*)\s*[xX]\s*(\d+[\.,]?\d*)\s*[xX]\s*(\d+[\.,]?\d*)\s*(mm|cm|m)?", desc_text, flags=re.I)
+        com_emb_dims = re.search(r"com embalagem[^\n]*?(\d+[\.,]?\d*)\s*[xX]\s*(\d+[\.,]?\d*)\s*[xX]\s*(\d+[\.,]?\d*)\s*(mm|cm|m)?", desc_text, flags=re.I)
+        sem_emb_peso = re.search(r"peso[^\n]*?sem embalagem[^\d]*(\d+[\.,]?\d*)\s*(kg|g)", desc_text, flags=re.I)
+        com_emb_peso = re.search(r"peso[^\n]*?com embalagem[^\d]*(\d+[\.,]?\d*)\s*(kg|g)", desc_text, flags=re.I)
+
+        altura_sem = largura_sem = profundidade_sem = comprimento_sem = None
+        altura_com = largura_com = profundidade_com = comprimento_com = None
+        peso_sem = peso_com = None
+
+        if sem_emb_dims:
+            altura_sem, largura_sem, profundidade_sem = sem_emb_dims.group(1), sem_emb_dims.group(2), sem_emb_dims.group(3)
+            comprimento_sem = profundidade_sem
+        if com_emb_dims:
+            altura_com, largura_com, profundidade_com = com_emb_dims.group(1), com_emb_dims.group(2), com_emb_dims.group(3)
+            comprimento_com = profundidade_com
+        if sem_emb_peso:
+            peso_sem = convert_weight(sem_emb_peso.group(1), sem_emb_peso.group(2))
+        if com_emb_peso:
+            peso_com = convert_weight(com_emb_peso.group(1), com_emb_peso.group(2))
+
+        if altura_sem and not altura_val: altura_val = altura_sem
+        if largura_sem and not largura_val: largura_val = largura_sem
+        if profundidade_sem and not profundidade_val: profundidade_val = profundidade_sem
+        if comprimento_sem and not comprimento_val: comprimento_val = comprimento_sem
+        if peso_sem and not peso_val: peso_val = peso_sem
+
+        loader.add_value('altura', altura_val)
+        loader.add_value('largura', largura_val)
+        loader.add_value('comprimento', comprimento_val)
+        loader.add_value('profundidade', profundidade_val)
+        loader.add_value('peso', peso_val)
+        loader.add_value('altura_sem_embalagem', altura_sem)
+        loader.add_value('largura_sem_embalagem', largura_sem)
+        loader.add_value('comprimento_sem_embalagem', comprimento_sem)
+        loader.add_value('profundidade_sem_embalagem', profundidade_sem)
+        loader.add_value('peso_sem_embalagem', peso_sem)
+        loader.add_value('altura_com_embalagem', altura_com)
+        loader.add_value('largura_com_embalagem', largura_com)
+        loader.add_value('comprimento_com_embalagem', comprimento_com)
+        loader.add_value('profundidade_com_embalagem', profundidade_com)
+        loader.add_value('peso_com_embalagem', peso_com)
 
         product_id_value = selector.css('button[name="add-to-cart"]::attr(value)').get()
         if product_id_value: loader.add_value('product_id', product_id_value)

@@ -11,15 +11,18 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
-# Concorrência (MODO ESTÁVEL PARA WINDOWS)
-CONCURRENT_REQUESTS_PER_DOMAIN = 1  # Estável: 1 requisição por domínio
-CONCURRENT_REQUESTS = 2  # Estável: 2 requisições simultâneas no total
-DOWNLOAD_DELAY = 1.0  # Estável: 1s entre requisições
+# Concorrência (OTIMIZADO PARA VELOCIDADE)
+CONCURRENT_REQUESTS_PER_DOMAIN = 2  # Aumentado de 1 para 2
+CONCURRENT_REQUESTS = 4  # Aumentado de 2 para 4
+DOWNLOAD_DELAY = 0.5  # Reduzido de 1.0 para 0.5
 
-# Timeouts globais para evitar travamentos
-DOWNLOAD_TIMEOUT = 90
-PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 20000
-PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 60000
+# Timeouts (REDUZIDOS PARA VELOCIDADE)
+DOWNLOAD_TIMEOUT = 60  # Reduzido de 90 para 60
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 15000  # Reduzido de 20000 para 15000
+PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 25000  # Reduzido de 30000 para 25000
+
+# LIMITE PARA TESTES (desativado)
+# CLOSESPIDER_ITEMCOUNT = 20
 
 # Pipelines
 ITEM_PIPELINES = {
@@ -47,7 +50,7 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
         "--disable-software-rasterizer",
         "--disable-extensions",
     ],
-    "timeout": 60000,
+    "timeout": 30000,
 }
 
 # Limita concorrência para evitar sobrecarga (ESTÁVEL)

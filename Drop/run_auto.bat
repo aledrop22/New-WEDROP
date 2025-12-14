@@ -16,10 +16,6 @@ IF %ERRORLEVEL% NEQ 0 (
 echo Cookie atualizado com sucesso!
 
 REM --- PASSO 3: Limpar dados antigos (JSON e DB) ---
-IF EXIST data.json (
-    echo Limpando data.json antigo...
-    del data.json
-)
 IF EXIST transformacao\meudrop_data.db (
     echo Limpando meudrop_data.db antigo...
     del transformacao\meudrop_data.db
@@ -31,8 +27,8 @@ echo (Salvando progresso em data.json em tempo real...)
 
 REM --- CORREÇÃO CONTRA CRASH/CONGELAMENTO (Funciona no Python 3.12) ---
 set ASYNCIO_EVENT_LOOP=asyncio.SelectorEventLoop
-REM Usamos -o (minúsculo) para salvar em tempo real (sua sugestão)
-cmd /c "py -m scrapy crawl meudrop -o data.json"
+REM Usamos -O (maiúsculo) para sobrescrever completamente e garantir output completo
+py -m scrapy crawl meudrop -O data.json
 
 REM (Pequena pausa para garantir que o Windows libere o arquivo)
 timeout /t 2 /nobreak > NUL
@@ -44,10 +40,14 @@ IF NOT EXIST data.json (
 echo Scraper finalizado.
 
 REM --- PASSO 5: Executar a exportação para o Dashboard ---
-echo (3/3) Exportando dados para SQL e Google Sheets...
+echo (3/3) Exportando dados para SQLite (modo teste - sem Google Sheets)...
 cd transformacao
 
-REM --- CORREÇÃO (ETAPA 3) ---
+REM --- MODO TESTE: Usa data_export_sqlite_only.py (sem Google Sheets) ---
+py data_export_sqlite_only.py
+
+REM --- MODO NORMAL (comentado): Descomente a linha abaixo para enviar ao Google Sheets ---
+REM
 cmd /c "py data_export.py"
 cd ..
 
