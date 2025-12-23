@@ -31,6 +31,25 @@ def load_new_data(file_path):
     
     df = pd.DataFrame(data)
     
+    # Mapear colunas do JSON para formato final
+    column_mapping = {
+        'title': 'Produto',
+        'price': 'Preço', 
+        'stock': 'Estoque',
+        'status_liquidacao': 'Liquidação',
+        'numero_vendas': 'Qtd. Vendida',
+        'product_id': 'ID do Produto',
+        'ncm': 'NCM',
+        'altura': 'Altura',
+        'largura': 'Largura',
+        'comprimento': 'Comprimento',
+        'profundidade': 'Profundidade',
+        'peso': 'Peso',
+        'url': 'URL'
+    }
+    
+    df = df.rename(columns=column_mapping)
+    
     # Adicionar coluna de data atual
     df['Data da Coleta'] = datetime.now()
     
@@ -92,7 +111,7 @@ def calculate_sales(df):
     # 4. Limpar coluna auxiliar
     df = df.drop(columns=['Data_Pura'])
     
-    # 5. Reordenar colunas (Dimensões APÓS URL como solicitado)
+    # 5. Reordenar colunas (até 'Peso')
     colunas_finais = [
         'Número Item',
         'Data da Coleta',
@@ -108,47 +127,8 @@ def calculate_sales(df):
         'Largura',
         'Comprimento',
         'Profundidade',
-        'Peso',
-        'Altura (sem embalagem)',
-        'Largura (sem embalagem)',
-        'Comprimento (sem embalagem)',
-        'Profundidade (sem embalagem)',
-        'Peso (sem embalagem)',
-        'Altura (com embalagem)',
-        'Largura (com embalagem)',
-        'Comprimento (com embalagem)',
-        'Profundidade (com embalagem)',
-        'Peso (com embalagem)'
+        'Peso'
     ]
-    
-    # Mapear colunas do JSON para formato final
-    column_mapping = {
-        'title': 'Produto',
-        'price': 'Preço', 
-        'stock': 'Estoque',
-        'status_liquidacao': 'Liquidação',
-        'id_produto': 'ID do Produto',
-        'product_id': 'ID do Produto',
-        'ncm': 'NCM',
-        'altura': 'Altura',
-        'largura': 'Largura',
-        'comprimento': 'Comprimento',
-        'profundidade': 'Profundidade',
-        'peso': 'Peso',
-        'altura_sem_embalagem': 'Altura (sem embalagem)',
-        'largura_sem_embalagem': 'Largura (sem embalagem)',
-        'comprimento_sem_embalagem': 'Comprimento (sem embalagem)',
-        'profundidade_sem_embalagem': 'Profundidade (sem embalagem)',
-        'peso_sem_embalagem': 'Peso (sem embalagem)',
-        'altura_com_embalagem': 'Altura (com embalagem)',
-        'largura_com_embalagem': 'Largura (com embalagem)',
-        'comprimento_com_embalagem': 'Comprimento (com embalagem)',
-        'profundidade_com_embalagem': 'Profundidade (com embalagem)',
-        'peso_com_embalagem': 'Peso (com embalagem)',
-        'url': 'URL'
-    }
-    
-    df = df.rename(columns=column_mapping)
     
     # Adicionar coluna Qtd. Vendida se não existir
     if 'Qtd. Vendida' not in df.columns:

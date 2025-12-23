@@ -58,17 +58,7 @@ def load_new_data(file_path):
         'largura': 'Largura',
         'comprimento': 'Comprimento',
         'profundidade': 'Profundidade',
-        'peso': 'Peso',
-        'altura_sem_embalagem': 'Altura (sem embalagem)',
-        'largura_sem_embalagem': 'Largura (sem embalagem)',
-        'comprimento_sem_embalagem': 'Comprimento (sem embalagem)',
-        'profundidade_sem_embalagem': 'Profundidade (sem embalagem)',
-        'peso_sem_embalagem': 'Peso (sem embalagem)',
-        'altura_com_embalagem': 'Altura (com embalagem)',
-        'largura_com_embalagem': 'Largura (com embalagem)',
-        'comprimento_com_embalagem': 'Comprimento (com embalagem)',
-        'profundidade_com_embalagem': 'Profundidade (com embalagem)',
-        'peso_com_embalagem': 'Peso (com embalagem)'
+        'peso': 'Peso'
     }
     df_novo.rename(columns=column_map, inplace=True)
 
@@ -124,7 +114,7 @@ def calculate_sales(df):
     # 4. Limpar colunas auxiliares
     df = df.drop(columns=['Data_Pura'])
 
-    # 5. Reordenar colunas para o formato final (Dimensões APÓS URL como solicitado)
+    # 5. Reordenar colunas para o formato final (até 'Peso')
     colunas_finais = [
         'Número Item',
         'Data da Coleta',
@@ -140,17 +130,7 @@ def calculate_sales(df):
         'Largura',
         'Comprimento',
         'Profundidade',
-        'Peso',
-        'Altura (sem embalagem)',
-        'Largura (sem embalagem)',
-        'Comprimento (sem embalagem)',
-        'Profundidade (sem embalagem)',
-        'Peso (sem embalagem)',
-        'Altura (com embalagem)',
-        'Largura (com embalagem)',
-        'Comprimento (com embalagem)',
-        'Profundidade (com embalagem)',
-        'Peso (com embalagem)'
+        'Peso'
     ]
 
     # Garante que todas as colunas existam

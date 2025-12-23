@@ -68,7 +68,7 @@ class MeudropSpider(scrapy.Spider):
         return spider
 
     # --- FUNÇÃO 1 (START): USA PLAYWRIGHT E STORAGE STATE ---
-    async def start(self):
+    def start_requests(self):
         url = self.start_urls[0]
         timestamp = int(time.time() * 1000)
         cache_busted_url = f"{url}?cache_buster={timestamp}"
@@ -324,27 +324,56 @@ class MeudropSpider(scrapy.Spider):
             ncm_nodes = selector.xpath("//p[strong[contains(translate(., 'ncm', 'NCM'), 'NCM')]]//text()").getall()
         if ncm_nodes:
             ncm_text = " ".join([clean_text(t) for t in ncm_nodes if clean_text(t)])
-            ncm_match = re.search(r'(\d{4}\.?\d{2}\.?\d{2}|\d{2}\.?\d{2}\.?\d{2}\.?\d{2}|\d{8})', ncm_text)
+            ncm_match = re.search(r'(\d[\d\.]*)', ncm_text)
             if ncm_match:
-                ncm_value = ncm_match.group(1)
+                ncm_value = re.sub(r'[^\d]', '', ncm_match.group(1))
         
         if not ncm_value:
             ncm_strong_nodes = selector.xpath("//p[contains(text(), 'NCM')]//strong//text()").getall()
             if ncm_strong_nodes:
                 for strong_text in ncm_strong_nodes:
                     strong_clean = clean_text(strong_text)
-                    if strong_clean and re.match(r'^\d{4}\.?\d{2}\.?\d{2}', strong_clean):
-                        ncm_value = strong_clean
+                    if strong_clean and re.match(r'^\d', strong_clean):
+                        ncm_value = re.sub(r'[^\d]', '', strong_clean)
                         break
         
+        # Tentar extrair do texto da descrição curta com múltiplos padrões (com ou sem dois-pontos)
         if not ncm_value and desc_text:
-            ncm_desc_match = re.search(r'NCM\s*:\s*(\d{4}\.?\d{2}\.?\d{2}|\d{2}\.?\d{2}\.?\d{2}\.?\d{2}|\d{8})', desc_text, flags=re.I)
+            # Padrão 1: "NCM: 9506.99.00" ou "NCM: 950699.00" (com dois-pontos)
+            ncm_desc_match = re.search(r'NCM\s*:\s*(\d[\d\.]*)', desc_text, flags=re.I)
             if ncm_desc_match:
-                ncm_value = ncm_desc_match.group(1)
+                ncm_value = re.sub(r'[^\d]', '', ncm_desc_match.group(1))
+            else:
+                # Padrão 2: "NCM 9506.99.00" ou "NCM 950699.00" (sem dois-pontos, com espaço)
+                ncm_desc_match = re.search(r'NCM\s+(\d[\d\.]*)', desc_text, flags=re.I)
+                if ncm_desc_match:
+                    ncm_value = re.sub(r'[^\d]', '', ncm_desc_match.group(1))
+                else:
+                    # Padrão 3: Qualquer número de 8+ dígitos que pareça um NCM
+                    ncm_desc_match = re.search(r'\b(\d{4}\.?\d{2}\.?\d{2})\b', desc_text)
+                    if ncm_desc_match:
+                        ncm_value = re.sub(r'[^\d]', '', ncm_desc_match.group(1))
         
-        # Remover pontos do NCM
-        if ncm_value:
-            ncm_value = ncm_value.replace('.', '')
+        # Se ainda não encontrou, tenta busca direta na aba de descrição (#tab-description)
+        if not ncm_value:
+            tab_desc_nodes = selector.css('div#tab-description').xpath('.//text()').getall()
+            tab_desc_text = " ".join([clean_text(t) for t in tab_desc_nodes if clean_text(t)]) if tab_desc_nodes else ""
+            
+            if tab_desc_text:
+                # Mesmo padrão de busca na descrição longa
+                ncm_desc_match = re.search(r'NCM\s*:\s*(\d[\d\.]*)', tab_desc_text, flags=re.I)
+                if ncm_desc_match:
+                    ncm_value = re.sub(r'[^\d]', '', ncm_desc_match.group(1))
+                else:
+                    ncm_desc_match = re.search(r'NCM\s+(\d[\d\.]*)', tab_desc_text, flags=re.I)
+                    if ncm_desc_match:
+                        ncm_value = re.sub(r'[^\d]', '', ncm_desc_match.group(1))
+                    else:
+                        ncm_desc_match = re.search(r'\b(\d{4}\.?\d{2}\.?\d{2})\b', tab_desc_text)
+                        if ncm_desc_match:
+                            ncm_value = re.sub(r'[^\d]', '', ncm_desc_match.group(1))
+        
+        # Armazenar apenas números (sem pontos)
         loader.add_value('ncm', ncm_value or '')
 
         def convert_weight(raw, unit):
