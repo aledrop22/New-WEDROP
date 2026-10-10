@@ -105,7 +105,7 @@ def _credential_values(
     if not prompt_for_credentials or not sys.stdin.isatty():
         raise RuntimeError(
             "É necessário autenticar no WeDrop. Configure WEDROP_EMAIL e "
-            "WEDROP_PASSWORD ou informe as credenciais no formulário do painel."
+            "WEDROP_PASSWORD no arquivo .env ou nas variáveis de ambiente."
         )
     if not email:
         email = input("E-mail do WeDrop: ").strip()
