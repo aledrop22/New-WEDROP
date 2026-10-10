@@ -1,6 +1,8 @@
-# Monitoramento WeDrop
+# scrapy_wedrop
 
-O fluxo principal mapeia o catálogo autenticado WeDrop e sincroniza produtos, estoque, saldos e histórico de movimentações no Supabase e em um banco SQLite local.
+Mapeamento do catálogo WeDrop por categoria, com histórico de vendas e estoque.
+
+O fluxo principal autentica no catálogo, mapeia produtos e categorias e sincroniza os dados no Supabase e em um banco SQLite local.
 
 ## Configuração única
 
@@ -33,4 +35,4 @@ O mesmo comando verifica ou renova a sessão, salva os cookies e continua o mape
 streamlit run app_monitoramento_vendas.py
 ```
 
-O painel mostra o ranking diário dos 20 produtos mais vendidos, gráficos de vendas, entradas de estoque e cobertura de produtos por categoria. Consulte [Drop/WEDROP_CATALOG_README.md](Drop/WEDROP_CATALOG_README.md) para detalhes.
+No sidebar, selecione o período e uma categoria para ver vendas, reposições, produtos movimentados e gráficos. A visão geral apresenta o comparativo por categoria e os 20 produtos mais vendidos no período. Consulte [Drop/WEDROP_CATALOG_README.md](Drop/WEDROP_CATALOG_README.md) para detalhes.
