@@ -6,8 +6,12 @@ NEWSPIDER_MODULE = "Site.spiders"
 
 ADDONS = {}
 
+import sys
+
 # TWISTED REACTOR - NECESSÁRIO PARA PLAYWRIGHT
-TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+# No Windows, não definimos TWISTED_REACTOR aqui - deixamos o spider configurar o ProactorEventLoop
+if sys.platform != "win32":
+    TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 
@@ -19,7 +23,7 @@ CONCURRENT_REQUESTS_PER_DOMAIN = 1  # Reduzido para evitar sobrecarga do browser
 CONCURRENT_REQUESTS = 2  # Reduzido para evitar crash
 DOWNLOAD_DELAY = 1.5  # Aumentado para dar tempo ao browser
 
-# Timeouts 
+# Timeouts
 DOWNLOAD_TIMEOUT = 120  # Aumentado de 60 para 120 segundos
 
 # LIMITE PARA TESTES (descomente para testar com poucas páginas)
@@ -57,6 +61,10 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
         "--disable-translate",
     ],
 }
+
+# Desabilitar subprocessos no Windows para evitar incompatibilidade com AsyncioSelectorReactor
+if sys.platform == "win32":
+    PLAYWRIGHT_LAUNCH_OPTIONS["handle_sigint"] = False
 
 # Timeouts/playwright (aumentados para maior estabilidade)
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 45_000  # 45s

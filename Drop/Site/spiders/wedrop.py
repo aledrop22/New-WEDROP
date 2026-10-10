@@ -20,7 +20,7 @@ if sys.platform == "win32":
     except Exception as e:
         print(f"Aviso: Não foi possível definir ProactorEventLoopPolicy: {e}")
 
-SITE_HOST = "wedrop.com.br"
+SITE_HOST = "dash.wedrop.com.br"
 STORAGE_STATE_FILE = 'storage_state.json' # Para carregar o estado completo
 
 def clean_text(text):
