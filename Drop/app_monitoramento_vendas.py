@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import date, timedelta
 from typing import Any
@@ -79,6 +80,9 @@ def _run_catalog_sync() -> None:
             )
         st.success("Catálogo atualizado e sincronizado.")
     except Exception as exc:
+        logging.getLogger("wedrop.scraper").exception(
+            "Falha ao atualizar catálogo pelo Streamlit."
+        )
         message = str(exc)
         if message.startswith("Supabase não configurado"):
             st.error(
@@ -108,10 +112,12 @@ def _status_bucket(value: str | None) -> str:
     return "Sem status"
 
 
+@st.fragment(run_every="5m", key="catalog-dashboard")
 def main() -> None:
     st.title("Monitoramento diário WeDrop")
     st.caption(
-        "Vendas e reposições de estoque por categoria, produto e período selecionado."
+        "Vendas e reposições de estoque por categoria, produto e período selecionado. "
+        "Os dados são atualizados automaticamente a cada 5 minutos."
     )
 
     with st.sidebar:
@@ -306,18 +312,31 @@ def main() -> None:
                 st.dataframe(
                     [
                         {
-                            "Produto": product["url"],
+                            "Produto": product["name"],
                             "SKU": product["sku"] or "",
                             "Status": status,
+                            "Preço": product["price"] or "",
+                            "EAN": product["ean"] or "",
                             "Vendido": product["units_sold"],
                             "Reposto": product["units_restocked"],
                             "Estoque": product["stock"] or "",
+                            "Estoque total": product["total_stock_count"] or "",
                             "Saldo real": product["real_balance"] or "",
+                            "Fornecedor": product["supplier"] or "",
+                            "CNPJ": product["cnpj"] or "",
+                            "Origem": product["origin_state"] or "",
+                            "NCM": product["ncm"] or "",
+                            "Peso": product["weight"] or "",
+                            "Altura": product["height"] or "",
+                            "Largura": product["width"] or "",
+                            "Comprimento": product["length"] or "",
+                            "Descrição": product["description"] or "",
+                            "URL": product["url"],
                         }
                         for product, status in filtered_products
                     ],
                     column_config={
-                        "Produto": st.column_config.LinkColumn(
+                        "URL": st.column_config.LinkColumn(
                             "Produto", display_text="Abrir no WeDrop"
                         )
                     },
@@ -388,9 +407,15 @@ def main() -> None:
                             "Categoria": row["category"],
                             "SKU": row["sku"] or "",
                             "Unidades vendidas": row["units_sold"],
+                            "URL": row["url"],
                         }
                         for row in top_products
                     ],
+                    column_config={
+                        "URL": st.column_config.LinkColumn(
+                            "Produto", display_text="Abrir no WeDrop"
+                        )
+                    },
                     hide_index=True,
                     use_container_width=True,
                 )

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import getpass
+import json
+import logging
 import os
 import re
 import sys
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
@@ -26,7 +30,10 @@ PRODUCTS_PER_PAGE = 100
 PROJECT_DIR = Path(__file__).resolve().parent
 STORAGE_STATE_FILE = PROJECT_DIR / "storage_state.json"
 DB_FILE = PROJECT_DIR / "wedrop_monitoramento.db"
+JSON_DATA_FILE = PROJECT_DIR / "data.json"
+LOG_FILE = PROJECT_DIR / "scraper_runs.log"
 CATEGORY_SELECTOR = 'a[draggable="false"][data-group=""]'
+PROGRESS_LOGGER = logging.getLogger("wedrop.scraper")
 PRODUCT_PATH = re.compile(
     r"/catalog/(?:[^/?#]+/)*(?:"
     r"(\d+)|([0-9a-f]{8}-[0-9a-f-]{27,})"
@@ -49,6 +56,59 @@ PRODUCT_FIELDS = (
     "total_stock_count",
     "real_balance",
 )
+
+
+def configure_progress_logging() -> None:
+    PROGRESS_LOGGER.setLevel(logging.INFO)
+    PROGRESS_LOGGER.propagate = False
+    if PROGRESS_LOGGER.handlers:
+        return
+
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler = RotatingFileHandler(
+        LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
+    )
+    file_handler.setFormatter(formatter)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    PROGRESS_LOGGER.addHandler(file_handler)
+    PROGRESS_LOGGER.addHandler(console_handler)
+
+
+def log_progress(message: str) -> None:
+    PROGRESS_LOGGER.info(message)
+
+
+class ProductJSONLWriter:
+    """Write complete product batches to the legacy-compatible data.json file."""
+
+    def __init__(self, output_path: Path):
+        self.output_path = output_path
+
+    def start(self) -> None:
+        self.output_path.write_text("", encoding="utf-8")
+
+    def append_batch(
+        self, products: list[dict], captured_at: str
+    ) -> None:
+        records = []
+        for product in products:
+            record = dict(product)
+            record["title"] = product.get("name", "")
+            record["numero_vendas"] = product.get("number_sales", "")
+            record["scrape_time"] = captured_at
+            record["altura"] = product.get("height", "")
+            record["largura"] = product.get("width", "")
+            record["comprimento"] = product.get("length", "")
+            record["peso"] = product.get("weight", "")
+            records.append(json.dumps(record, ensure_ascii=False))
+
+        with self.output_path.open("a", encoding="utf-8", newline="\n") as output:
+            output.write("\n".join(records) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
 
 
 def product_id_from_url(url: str) -> str:
@@ -92,6 +152,11 @@ def _as_int(value: str) -> int | None:
     if not match:
         return None
     return int(re.sub(r"\D", "", match.group()))
+
+
+def _sales_count(value: str) -> str:
+    match = re.fullmatch(r"\s*(\d[\d.,]*)\s*", value)
+    return str(int(re.sub(r"\D", "", match.group(1)))) if match else ""
 
 
 def _credential_values(
@@ -165,14 +230,25 @@ class WedropMonitor:
         if await page.locator('input[type="password"]').count():
             raise RuntimeError("Login não autorizado pelo WeDrop; sessão não foi salva.")
         await context.storage_state(path=str(STORAGE_STATE_FILE))
-        print(f"Sessão autenticada salva em {STORAGE_STATE_FILE.name}.")
+        log_progress(f"Sessão autenticada salva em {STORAGE_STATE_FILE.name}.")
 
     async def get_categories(self, page) -> list[dict]:
         categories = []
         seen_urls = set()
-        for link in await page.locator(CATEGORY_SELECTOR).all():
+        category_links = page.locator(CATEGORY_SELECTOR)
+        try:
+            await category_links.first.wait_for(state="visible", timeout=15000)
+        except PlaywrightTimeoutError as exc:
+            raise RuntimeError(
+                "O catálogo abriu, mas as categorias não apareceram após "
+                f"15 segundos (URL: {page.url}; título: {await page.title()}). "
+                "Confirme se a sessão está autenticada e se o catálogo terminou "
+                "de carregar."
+            ) from exc
+
+        for link in await category_links.all():
             href = await link.get_attribute("href")
-            name_node = link.locator('p[class*="uniu7j"]').first
+            name_node = link.locator("p").first
             name = (await name_node.inner_text()).strip() if await name_node.count() else ""
             if not name:
                 name = (await link.inner_text()).strip()
@@ -205,6 +281,33 @@ class WedropMonitor:
             )
         return categories
 
+    @staticmethod
+    def _filter_categories(
+        categories: list[dict], category_filter: str | None
+    ) -> list[dict]:
+        if not category_filter:
+            return categories
+        needle = category_filter.casefold().strip()
+        exact_matches = [
+            category
+            for category in categories
+            if category["name"].casefold() == needle
+        ]
+        if exact_matches:
+            return exact_matches
+        matches = [
+            category
+            for category in categories
+            if needle in category["name"].casefold()
+        ]
+        if not matches:
+            raise RuntimeError(
+                f"Nenhuma categoria corresponde a '{category_filter}'. "
+                "Categorias disponíveis: "
+                + ", ".join(category["name"] for category in categories)
+            )
+        return matches
+
     async def _product_links_on_page(self, page) -> dict[str, str]:
         hrefs = await page.locator('a[href*="/catalog/"]').evaluate_all(
             "(anchors) => anchors.map((anchor) => anchor.href)"
@@ -229,6 +332,28 @@ class WedropMonitor:
     async def _pagination_state(self, page) -> tuple[int, int] | None:
         text = await page.locator("body").inner_text()
         return self._parse_pagination_state(text)
+
+    @staticmethod
+    def _next_page_state(
+        current_url: str, expected_products: int | None
+    ) -> tuple[int, int] | None:
+        if expected_products is None:
+            return None
+        parsed_url = urlparse(current_url)
+        query = parse_qs(parsed_url.query, keep_blank_values=True)
+        try:
+            current_page = int(query["page"][0])
+            limit = int(query["limit"][0])
+        except (KeyError, ValueError, IndexError):
+            return None
+        if current_page < 1 or limit < 1:
+            return None
+
+        total_pages = (expected_products + limit - 1) // limit
+        if current_page >= total_pages:
+            return None
+
+        return current_page + 1, total_pages
 
     async def _set_products_per_page(
         self, page, expected_products: int | None = None
@@ -316,7 +441,7 @@ class WedropMonitor:
             pagination_state = await self._pagination_state(page)
             if pagination_state is not None:
                 current_page, total_pages = pagination_state
-                print(f"  Página {current_page} de {total_pages}")
+                log_progress(f"Listagem: página {current_page} de {total_pages}.")
                 if current_page >= total_pages:
                     break
 
@@ -335,6 +460,42 @@ class WedropMonitor:
             seen_pages.add(signature)
             next_button = await self._next_page(page)
             if next_button is None:
+                expected_product_count = category.get("count")
+                fallback_state = self._next_page_state(
+                    page.url, expected_product_count
+                )
+                if (
+                    fallback_state is not None
+                    and expected_product_count is not None
+                    and len(products) < expected_product_count
+                ):
+                    expected_page, total_pages = fallback_state
+                    numbered_button = page.get_by_role(
+                        "button", name=str(expected_page), exact=True
+                    ).last
+                    if (
+                        await numbered_button.count()
+                        and await numbered_button.is_visible()
+                        and await numbered_button.is_enabled()
+                    ):
+                        log_progress(
+                            "  Botão de próxima página indisponível; "
+                            f"selecionando a página {expected_page}."
+                        )
+                        await numbered_button.click()
+                        for _ in range(40):
+                            state = await self._pagination_state(page)
+                            page_links = await self._product_links_on_page(page)
+                            if state == fallback_state and page_links:
+                                break
+                            await page.wait_for_timeout(250)
+                        else:
+                            raise RuntimeError(
+                                f"Não foi possível confirmar a página "
+                                f"{expected_page} de {total_pages} da categoria "
+                                f"{category['name']} após clicar no número da página."
+                            )
+                        continue
                 if (
                     pagination_state is not None
                     and pagination_state[0] < pagination_state[1]
@@ -398,8 +559,13 @@ class WedropMonitor:
 
         name_node = page.locator("h1, h2").first
         name = (await name_node.inner_text()).strip() if await name_node.count() else ""
-        if not name:
-            name = (await page.title()).strip()
+        if not name or name.casefold() in {"produto", "product"}:
+            page_title = (await page.title()).strip()
+            name = (
+                page_title
+                if page_title.casefold() not in {"wedrop", "produto", "product"}
+                else ""
+            )
         page_text = await page.locator("body").inner_text()
 
         sku_ean_node = page.locator('p[class*="nk7nkj"]').first
@@ -416,6 +582,12 @@ class WedropMonitor:
         availability = (
             (await availability_node.inner_text()).strip()
             if await availability_node.count()
+            else ""
+        )
+        description_panel = page.get_by_role("tabpanel").first
+        description = (
+            (await description_panel.inner_text()).strip()
+            if await description_panel.count()
             else ""
         )
 
@@ -464,7 +636,10 @@ class WedropMonitor:
         ) or availability
         real_balance = value_for_label(page_text, ("Saldo real", "Saldo"))
         total_stock = value_for_label(page_text, ("Estoque total", "Total em estoque"))
-        sales = value_for_label(page_text, ("Vendas", "Número de vendas", "Vendido"))
+        sales = value_for_label(page_text, ("Vendas", "Número de vendas"))
+        sales_count = _sales_count(sales) or _sales_count(
+            details.get("number_sales", "")
+        )
         status = value_for_label(page_text, ("Status", "Situação"))
         if not status and re.search(r"\b(desativado|inativo)\b", page_text, re.I):
             status = "Inativo"
@@ -476,24 +651,24 @@ class WedropMonitor:
             "name": name,
             "category": category_name,
             "url": product_url,
-            "sku": sku_match.group(1).strip() if sku_match else details["sku"],
-            "ean": ean_match.group(1).strip() if ean_match else details["ean"],
+            "sku": sku_match.group(1).strip() if sku_match else details.get("sku", ""),
+            "ean": ean_match.group(1).strip() if ean_match else details.get("ean", ""),
             "price": price or value_for_label(page_text, ("Preço",)),
             "availability": availability,
             "stock": stock,
-            "total_stock_count": total_stock or details["total_stock_count"],
-            "real_balance": real_balance or details["real_balance"],
+            "total_stock_count": total_stock or details.get("total_stock_count", ""),
+            "real_balance": real_balance or details.get("real_balance", ""),
             "is_active": status,
-            "supplier": value_for_label(page_text, ("Fornecedor",)) or details["supplier"],
-            "cnpj": cnpj or details["cnpj"],
-            "origin_state": origin or details["origin_state"],
-            "ncm": details["ncm"],
-            "weight": details["weight"],
-            "height": details["height"],
-            "width": details["width"],
-            "length": details["length"],
-            "description": details["description"],
-            "number_sales": sales or details["number_sales"],
+            "supplier": value_for_label(page_text, ("Fornecedor",)) or details.get("supplier", ""),
+            "cnpj": cnpj or details.get("cnpj", ""),
+            "origin_state": origin or details.get("origin_state", ""),
+            "ncm": details.get("ncm", ""),
+            "weight": details.get("weight", ""),
+            "height": details.get("height", ""),
+            "width": details.get("width", ""),
+            "length": details.get("length", ""),
+            "description": description or details.get("description", ""),
+            "number_sales": sales_count,
             "stock_history": history,
         }
 
@@ -502,13 +677,25 @@ class WedropMonitor:
         email: str | None = None,
         password: str | None = None,
         prompt_for_credentials: bool = True,
+        category_filter: str | None = None,
+        product_limit: int | None = None,
+        local_only: bool = False,
     ) -> None:
+        configure_progress_logging()
+        log_progress("Iniciando coleta completa do catálogo WeDrop.")
+        log_progress(f"Destino JSON: {JSON_DATA_FILE}")
+        log_progress(f"Destino histórico local: {DB_FILE}")
         load_local_environment()
-        supabase = SupabaseRepository.from_environment()
+        supabase = None if local_only else SupabaseRepository.from_environment()
         captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        supabase.validate()
-        print("Conexão e tabelas Supabase validadas.")
+        if supabase is not None:
+            log_progress("Validando conexão e tabelas do Supabase antes da coleta.")
+            supabase.validate()
+            log_progress("Conexão e tabelas Supabase validadas.")
+        else:
+            log_progress("Modo local: Supabase não será atualizado.")
         async with async_playwright() as playwright:
+            log_progress("Iniciando navegador Chromium.")
             browser = await playwright.chromium.launch(headless=True)
             try:
                 if STORAGE_STATE_FILE.is_file():
@@ -522,69 +709,203 @@ class WedropMonitor:
                     await self.ensure_authenticated(
                         page, context, email, password, prompt_for_credentials
                     )
-                    categories = await self.get_categories(page)
-                    print(f"Categorias encontradas: {len(categories)}")
+                    log_progress("Sessão autenticada e catálogo aberto.")
+                    categories = self._filter_categories(
+                        await self.get_categories(page), category_filter
+                    )
+                    log_progress(f"Categorias selecionadas: {len(categories)}.")
                     total_products = 0
+                    json_writer = ProductJSONLWriter(JSON_DATA_FILE)
+                    json_writer.start()
+                    log_progress(
+                        "data.json limpo para esta execução; histórico SQLite e "
+                        "registros anteriores do Supabase serão preservados."
+                    )
+                    remaining_limit = product_limit
 
                     for category_index, category in enumerate(categories, 1):
-                        print(
+                        log_progress(
                             f"[{category_index}/{len(categories)}] "
-                            f"Mapeando {category['name']}..."
+                            f"Lendo listagem da categoria {category['name']}..."
                         )
                         product_links = await self.get_products_from_category(
                             page, category
                         )
+                        discovered_product_count = len(product_links)
+                        expected_count = category.get("count")
+                        log_progress(
+                            f"Listagem lida: {discovered_product_count} produtos "
+                            f"encontrados"
+                            + (
+                                f" de {expected_count} informados pelo site."
+                                if expected_count is not None
+                                else "."
+                            )
+                        )
+                        if remaining_limit is not None:
+                            product_links = dict(
+                                list(product_links.items())[:remaining_limit]
+                            )
+                            remaining_limit -= len(product_links)
+                            log_progress(
+                                f"Limite aplicado: serão detalhados "
+                                f"{len(product_links)} produtos nesta categoria."
+                            )
                         self.repository.save_category(
                             category, len(product_links), captured_at
                         )
-                        supabase.save_category(
-                            category, len(product_links), captured_at
+                        log_progress(
+                            f"Categoria salva no SQLite: {category['name']} "
+                            f"({len(product_links)} detalhados)."
                         )
+                        if supabase is not None:
+                            supabase.save_category(
+                                category, len(product_links), captured_at
+                            )
+                            log_progress(
+                                f"Categoria sincronizada no Supabase: "
+                                f"{category['name']}."
+                            )
                         products = []
-                        for product_id, product_url in product_links.items():
+                        for product_index, (product_id, product_url) in enumerate(
+                            product_links.items(), 1
+                        ):
+                            log_progress(
+                                f"Lendo produto {product_index}/{len(product_links)} "
+                                f"(ID {product_id})."
+                            )
                             product = await self.get_product_details_and_history(
                                 page, product_id, product_url, category["name"]
                             )
                             products.append(product)
+                            log_progress(
+                                f"Produto lido: {product.get('name') or 'nome indisponível'}; "
+                                f"histórico: {len(product.get('stock_history', []))} "
+                                "movimentações."
+                            )
                             if len(products) == 50:
+                                log_progress("Salvando lote de 50 produtos no SQLite.")
                                 self.repository.save_products(products, captured_at)
-                                supabase.save_products(products, captured_at)
+                                log_progress(
+                                    "Lote de 50 produtos salvo no SQLite, incluindo "
+                                    "históricos de estoque."
+                                )
+                                json_writer.append_batch(products, captured_at)
+                                log_progress("Lote de 50 produtos gravado em data.json.")
+                                if supabase is not None:
+                                    log_progress(
+                                        "Enviando lote de 50 produtos e históricos "
+                                        "para o Supabase."
+                                    )
+                                    supabase.save_products(products, captured_at)
+                                    log_progress(
+                                        "Lote de 50 produtos e históricos confirmado "
+                                        "no Supabase."
+                                    )
                                 total_products += len(products)
                                 products = []
                         if products:
+                            log_progress(
+                                f"Salvando lote final de {len(products)} produtos "
+                                "no SQLite."
+                            )
                             self.repository.save_products(products, captured_at)
-                            supabase.save_products(products, captured_at)
+                            log_progress(
+                                f"Lote final de {len(products)} produtos salvo no "
+                                "SQLite, incluindo históricos de estoque."
+                            )
+                            json_writer.append_batch(products, captured_at)
+                            log_progress(
+                                f"Lote final de {len(products)} produtos gravado "
+                                "em data.json."
+                            )
+                            if supabase is not None:
+                                log_progress(
+                                    f"Enviando lote final de {len(products)} produtos "
+                                    "e históricos para o Supabase."
+                                )
+                                supabase.save_products(products, captured_at)
+                                log_progress(
+                                    f"Lote final de {len(products)} produtos e "
+                                    "históricos confirmado no Supabase."
+                                )
                             total_products += len(products)
                         if (
                             category["count"] is not None
-                            and len(product_links) < category["count"]
+                            and discovered_product_count < category["count"]
                         ):
-                            print(
-                                f"  AVISO: site informa {category['count']} itens; "
-                                f"foram encontrados {len(product_links)} links."
+                            log_progress(
+                                f"AVISO: site informa {category['count']} itens; "
+                                f"foram encontrados {discovered_product_count} links."
                             )
-                        print(f"  Produtos salvos: {len(product_links)}")
+                        log_progress(
+                            f"Categoria concluída: {len(product_links)} produtos "
+                            "detalhados e salvos."
+                        )
+                        if remaining_limit == 0:
+                            break
 
-                    print(
-                        f"Mapeamento concluído e sincronizado: "
-                        f"{len(categories)} categorias, {total_products} produtos."
+                    destination = "localmente" if local_only else "e sincronizado"
+                    log_progress(
+                        f"Mapeamento concluído {destination}: {len(categories)} "
+                        f"categorias, {total_products} produtos."
                     )
-                    print("Destino local:", DB_FILE)
-                    print("Destino remoto: Supabase (categorias, produtos e eventos)")
+                    log_progress(f"Destino histórico local: {DB_FILE}")
+                    log_progress(f"Catálogo JSON Lines: {JSON_DATA_FILE}")
+                    if supabase is not None:
+                        log_progress(
+                            "Destino remoto: Supabase (categorias, produtos e eventos)."
+                        )
+                    log_progress(f"Log detalhado da execução: {LOG_FILE}")
                 finally:
                     await context.close()
             finally:
-                supabase.close()
+                if supabase is not None:
+                    supabase.close()
                 await browser.close()
 
     def close(self) -> None:
         self.repository.close()
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("o limite deve ser maior que zero")
+    return parsed
+
+
 async def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Mapeia o catálogo autenticado do WeDrop."
+    )
+    parser.add_argument(
+        "--category",
+        help="Coleta apenas categorias cujo nome contenha este texto.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=positive_int,
+        help="Limita o total de produtos detalhados nesta execução.",
+    )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Grava no JSON e banco SQLite locais, sem sincronizar com Supabase.",
+    )
+    args = parser.parse_args()
     monitor = WedropMonitor()
     try:
-        await monitor.run_full_mapping()
+        try:
+            await monitor.run_full_mapping(
+                category_filter=args.category,
+                product_limit=args.limit,
+                local_only=args.local_only,
+            )
+        except Exception:
+            if PROGRESS_LOGGER.handlers:
+                PROGRESS_LOGGER.exception("Coleta WeDrop encerrada com erro.")
+            raise
     finally:
         monitor.close()
 

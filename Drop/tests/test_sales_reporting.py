@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -16,7 +17,9 @@ from sales_reporting import (
     parse_quantity,
 )
 from wedrop_monitor_sistema import (
+    ProductJSONLWriter,
     WedropMonitor,
+    _sales_count,
     product_id_from_url,
     value_for_label,
 )
@@ -32,6 +35,126 @@ class SalesReportingTests(unittest.TestCase):
         )
         self.assertIsNone(WedropMonitor._parse_pagination_state("Página 3 de 2"))
         self.assertIsNone(WedropMonitor._parse_pagination_state("Sem paginação"))
+
+    def test_pagination_fallback_calculates_next_page_from_url(self):
+        target = WedropMonitor._next_page_state(
+            "https://dash.wedrop.com.br/catalog/cozinha"
+            "?limit=100&offset=300&page=4&search=panela",
+            1276,
+        )
+        self.assertIsNotNone(target)
+        if target is not None:
+            self.assertEqual(target, (5, 13))
+        self.assertIsNone(
+            WedropMonitor._next_page_state(
+                "https://dash.wedrop.com.br/catalog/cozinha"
+                "?limit=100&offset=1200&page=13",
+                1276,
+            )
+        )
+        self.assertIsNone(
+            WedropMonitor._next_page_state(
+                "https://dash.wedrop.com.br/catalog/cozinha", 1276
+            )
+        )
+
+    def test_product_details_allow_missing_optional_technical_fields(self):
+        async def extract_product():
+            empty_locator = Mock()
+            empty_locator.first = empty_locator
+            empty_locator.count = AsyncMock(return_value=0)
+            empty_locator.all = AsyncMock(return_value=[])
+            empty_locator.inner_text = AsyncMock(return_value="Produto teste")
+            description_panel = Mock()
+            description_panel.first = description_panel
+            description_panel.count = AsyncMock(return_value=1)
+            description_panel.inner_text = AsyncMock(
+                return_value="Descrição completa do produto"
+            )
+            page = Mock()
+            page.goto = AsyncMock()
+            page.wait_for_timeout = AsyncMock()
+            page.locator = Mock(return_value=empty_locator)
+            page.get_by_role = Mock(
+                side_effect=[description_panel, empty_locator]
+            )
+            page.title = AsyncMock(return_value="Produto teste")
+
+            monitor = WedropMonitor()
+            try:
+                return await monitor.get_product_details_and_history(
+                    page,
+                    "123",
+                    "https://dash.wedrop.com.br/catalog/123",
+                    "Categoria teste",
+                )
+            finally:
+                monitor.close()
+
+        product = asyncio.run(extract_product())
+        self.assertEqual(product["sku"], "")
+        self.assertEqual(product["ean"], "")
+        self.assertEqual(product["ncm"], "")
+        self.assertEqual(product["description"], "Descrição completa do produto")
+
+    def test_product_jsonl_writer_saves_incremental_batches(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "data.json"
+            writer = ProductJSONLWriter(output_path)
+            writer.start()
+            writer.append_batch(
+                [
+                    {
+                        "product_id": "123",
+                        "name": "Produto teste",
+                        "number_sales": "7",
+                        "height": "10 cm",
+                        "stock_history": [{"type": "Venda", "quantity": "- 1"}],
+                    }
+                ],
+                "2026-10-10T12:00:00-03:00",
+            )
+            writer.append_batch(
+                [{"product_id": "456", "name": "Segundo produto"}],
+                "2026-10-10T12:01:00-03:00",
+            )
+
+            records = [
+                json.loads(line)
+                for line in output_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([record["product_id"] for record in records], ["123", "456"])
+            self.assertEqual(records[0]["title"], "Produto teste")
+            self.assertEqual(records[0]["numero_vendas"], "7")
+            self.assertEqual(records[0]["altura"], "10 cm")
+            self.assertEqual(records[0]["scrape_time"], "2026-10-10T12:00:00-03:00")
+            self.assertEqual(records[0]["stock_history"][0]["type"], "Venda")
+
+    def test_category_filter_matches_case_insensitive_substrings(self):
+        categories = [
+            {"name": "Beleza"},
+            {"name": "Beleza e Cuidados"},
+            {"name": "Cozinha"},
+        ]
+        monitor = WedropMonitor()
+        self.addCleanup(monitor.close)
+        matches = monitor._filter_categories(categories, "bElEzA")
+        self.assertEqual(
+            [category["name"] for category in matches],
+            ["Beleza"],
+        )
+        self.assertEqual(
+            [category["name"] for category in monitor._filter_categories(categories, "beleza e")],
+            ["Beleza e Cuidados"],
+        )
+        with self.assertRaisesRegex(RuntimeError, "Categorias disponíveis"):
+            monitor._filter_categories(categories, "inexistente")
+
+    def test_sales_count_rejects_non_numeric_label_values(self):
+        self.assertEqual(_sales_count("12"), "12")
+        self.assertEqual(_sales_count(" 1.200 "), "1200")
+        self.assertEqual(_sales_count("POR"), "")
+        self.assertEqual(_sales_count("Vendido por 12"), "")
 
     def test_parses_date_formats_and_quantities(self):
         for value in ("10/10/2026 15:42:08", "2026-10-10T15:42:08"):
@@ -110,6 +233,10 @@ class SalesReportingTests(unittest.TestCase):
                         "category": "Categoria A",
                         "url": "https://example.com/products/a1",
                         "sku": "A1",
+                        "ean": "789123",
+                        "price": "R$ 10,00",
+                        "description": "Descrição de teste",
+                        "ncm": "12345678",
                         "is_active": "Ativo",
                         "stock_history": [
                             {
@@ -182,6 +309,9 @@ class SalesReportingTests(unittest.TestCase):
             [(row["name"], row["is_active"]) for row in category_products],
             [("Produto A1", "Ativo"), ("Produto A2", "Inativo")],
         )
+        self.assertEqual(category_products[0]["price"], "R$ 10,00")
+        self.assertEqual(category_products[0]["description"], "Descrição de teste")
+        self.assertEqual(category_products[0]["ncm"], "12345678")
 
         products = repository.products_activity_for_category(
             "Categoria A", date(2026, 10, 10), date(2026, 10, 12)
@@ -203,6 +333,12 @@ class SalesReportingTests(unittest.TestCase):
                 date(2026, 10, 10), date(2026, 10, 12)
             )[0]["name"],
             "Produto B1",
+        )
+        self.assertEqual(
+            repository.top_products_for_period(
+                date(2026, 10, 10), date(2026, 10, 12)
+            )[0]["url"],
+            "https://example.com/products/b1",
         )
 
     def test_period_activity_rejects_reversed_dates(self):

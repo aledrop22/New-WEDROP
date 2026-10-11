@@ -21,7 +21,7 @@ SUPABASE_SERVICE_ROLE_KEY = "sua-chave-de-servico"
 
 Nunca publique a chave de serviço nem coloque esses valores no repositório. Se a sessão salva estiver válida, o login é reutilizado; se estiver vencida, a coleta autentica, salva os cookies e continua sem etapa separada.
 
-Use **Atualizar catálogo e históricos** para executar o login, o mapeamento e a sincronização sem obter cookies em uma etapa separada. O scraper grava no banco SQLite local e nas tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` do Supabase. Falhas de configuração ou gravação remota são mostradas como erro.
+Use **Atualizar catálogo e históricos** para executar o login, o mapeamento e a sincronização sem obter cookies em uma etapa separada. O scraper salva cada lote de 50 produtos no `data.json` em formato JSON Lines, no banco SQLite local e nas tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` do Supabase. O painel consulta o SQLite para montar tabelas e gráficos e, ao abrir uma categoria, mostra os dados salvos do produto, incluindo preço, SKU, descrição, NCM, estoque, dimensões e histórico agregado de vendas/reposições. Falhas de configuração ou gravação remota são mostradas como erro; os lotes locais já concluídos permanecem salvos.
 
 Durante o mapeamento, o scraper seleciona 100 produtos por página quando essa opção está disponível, lê o indicador "Página X de Y" e avança sozinho até a última página de cada categoria. Divergências entre a contagem da categoria e os produtos coletados são reportadas como erro em vez de marcar silenciosamente a categoria como completa.
 

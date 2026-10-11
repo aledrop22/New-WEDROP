@@ -354,8 +354,11 @@ class SalesRepository:
         return list(
             self.connection.execute(
                 """
-                SELECT p.product_id, p.name, p.sku, p.url, p.is_active,
-                       p.stock, p.real_balance,
+                SELECT p.product_id, p.name, p.sku, p.ean, p.url, p.is_active,
+                       p.price, p.availability, p.stock, p.total_stock_count,
+                       p.real_balance, p.supplier, p.cnpj, p.origin_state, p.ncm,
+                       p.weight, p.height, p.width, p.length, p.description,
+                       p.number_sales,
                        COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
                                          THEN e.quantity ELSE 0 END), 0) AS units_sold,
                        COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
@@ -366,8 +369,11 @@ class SalesRepository:
                       AND e.event_at >= ?
                       AND e.event_at < ?
                 WHERE p.category = ?
-                GROUP BY p.product_id, p.name, p.sku, p.url, p.is_active,
-                         p.stock, p.real_balance
+                GROUP BY p.product_id, p.name, p.sku, p.ean, p.url, p.is_active,
+                         p.price, p.availability, p.stock, p.total_stock_count,
+                         p.real_balance, p.supplier, p.cnpj, p.origin_state, p.ncm,
+                         p.weight, p.height, p.width, p.length, p.description,
+                         p.number_sales
                 ORDER BY units_sold DESC, units_restocked DESC,
                          p.name COLLATE NOCASE
                 """,
@@ -442,7 +448,7 @@ class SalesRepository:
         return list(
             self.connection.execute(
                 """
-                SELECT p.product_id, p.name, p.category, p.sku,
+                SELECT p.product_id, p.name, p.category, p.sku, p.url,
                        SUM(e.quantity) AS units_sold
                 FROM stock_events AS e
                 JOIN products AS p ON p.product_id = e.product_id
