@@ -21,6 +21,8 @@ O programa verifica a sessão do catálogo a cada execução. Se ela tiver expir
 - SKU, EAN, preço, disponibilidade/estoque, saldo, situação, fornecedor, CNPJ, estado de origem, NCM, dimensões, peso, descrição e contador de vendas quando exibidos na página.
 - Registros do histórico de estoque, com tipo de movimento, quantidade, data/hora original, data interpretada e chave da nota fiscal.
 
+Em cada categoria, a coleta seleciona 100 produtos por página quando o seletor oferece essa opção. Ela acompanha "Página X de Y", avança automaticamente até a página final e interrompe com erro explícito se a paginação ou a contagem reportada indicar que faltaram produtos.
+
 As tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` recebem upserts idempotentes. Eventos repetidos em uma coleta diária não são contabilizados duas vezes. SQLite é mantido como cópia operacional local.
 
 ## Painel e rotina diária

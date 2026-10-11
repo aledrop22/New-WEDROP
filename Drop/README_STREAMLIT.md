@@ -23,4 +23,6 @@ Nunca publique a chave de serviço nem coloque esses valores no repositório. Se
 
 Use **Atualizar catálogo e históricos** para executar o login, o mapeamento e a sincronização sem obter cookies em uma etapa separada. O scraper grava no banco SQLite local e nas tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` do Supabase. Falhas de configuração ou gravação remota são mostradas como erro.
 
+Durante o mapeamento, o scraper seleciona 100 produtos por página quando essa opção está disponível, lê o indicador "Página X de Y" e avança sozinho até a última página de cada categoria. Divergências entre a contagem da categoria e os produtos coletados são reportadas como erro em vez de marcar silenciosamente a categoria como completa.
+
 Veja [WEDROP_CATALOG_README.md](./WEDROP_CATALOG_README.md) para configuração, campos mapeados e solução de problemas.

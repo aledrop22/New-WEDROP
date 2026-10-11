@@ -22,6 +22,7 @@ from sales_reporting import (
 
 
 BASE_URL = "https://dash.wedrop.com.br"
+PRODUCTS_PER_PAGE = 100
 PROJECT_DIR = Path(__file__).resolve().parent
 STORAGE_STATE_FILE = PROJECT_DIR / "storage_state.json"
 DB_FILE = PROJECT_DIR / "wedrop_monitoramento.db"
@@ -215,6 +216,54 @@ class WedropMonitor:
                 links.setdefault(product_id, href)
         return links
 
+    @staticmethod
+    def _parse_pagination_state(text: str) -> tuple[int, int] | None:
+        match = re.search(r"página\s+(\d+)\s+de\s+(\d+)", text, re.IGNORECASE)
+        if not match:
+            return None
+        current_page, total_pages = (int(value) for value in match.groups())
+        if total_pages < 1 or current_page < 1 or current_page > total_pages:
+            return None
+        return current_page, total_pages
+
+    async def _pagination_state(self, page) -> tuple[int, int] | None:
+        text = await page.locator("body").inner_text()
+        return self._parse_pagination_state(text)
+
+    async def _set_products_per_page(
+        self, page, expected_products: int | None = None
+    ) -> None:
+        select = page.locator("select.chakra-select").first
+        await select.wait_for(state="visible", timeout=10000)
+        if not await select.count():
+            return
+        if not await select.locator(
+            f'option[value="{PRODUCTS_PER_PAGE}"]'
+        ).count():
+            return
+        if await select.input_value() != str(PRODUCTS_PER_PAGE):
+            await select.select_option(str(PRODUCTS_PER_PAGE))
+            await page.wait_for_function(
+                "(size) => new URL(location.href).searchParams.get('limit') === String(size)",
+                arg=PRODUCTS_PER_PAGE,
+            )
+        expected_pages = (
+            (expected_products + PRODUCTS_PER_PAGE - 1) // PRODUCTS_PER_PAGE
+            if expected_products is not None
+            else None
+        )
+        for _ in range(40):
+            state = await self._pagination_state(page)
+            if state is not None and (
+                expected_pages is None or state == (1, expected_pages)
+            ):
+                return
+            await page.wait_for_timeout(250)
+        raise RuntimeError(
+            "O seletor foi configurado para 100 produtos por página, mas o "
+            "indicador de paginação não corresponde à quantidade esperada."
+        )
+
     async def _next_page(self, page):
         selectors = (
             'a[rel="next"]',
@@ -227,16 +276,24 @@ class WedropMonitor:
             'a:has-text("Próxima")',
             'a:has-text("Próximo")',
         )
+        next_button = page.get_by_role("button", name=">", exact=True).last
+        if await next_button.count() and await next_button.is_visible():
+            if await next_button.is_enabled():
+                return next_button
         for selector in selectors:
             candidate = page.locator(selector).last
-            if await candidate.count() and await candidate.is_visible():
-                if await candidate.get_attribute("disabled") is None:
+            if (
+                await candidate.count()
+                and await candidate.is_visible()
+                and await candidate.is_enabled()
+            ):
                     return candidate
         return None
 
     async def get_products_from_category(self, page, category: dict) -> dict[str, str]:
         await page.goto(category["url"], wait_until="domcontentloaded")
         await page.wait_for_timeout(1000)
+        await self._set_products_per_page(page, category.get("count"))
         products: dict[str, str] = {}
         seen_pages: set[tuple[str, tuple[str, ...]]] = set()
 
@@ -256,23 +313,76 @@ class WedropMonitor:
                 await page.mouse.wheel(0, 1200)
                 await page.wait_for_timeout(250)
 
+            pagination_state = await self._pagination_state(page)
+            if pagination_state is not None:
+                current_page, total_pages = pagination_state
+                print(f"  Página {current_page} de {total_pages}")
+                if current_page >= total_pages:
+                    break
+
             if category["count"] is not None and len(products) >= category["count"]:
                 break
 
-            signature = (page.url, tuple(sorted(products)))
+            signature = (
+                str(pagination_state or page.url),
+                tuple(sorted(await self._product_links_on_page(page))),
+            )
             if signature in seen_pages:
-                break
+                raise RuntimeError(
+                    f"A paginação da categoria {category['name']} repetiu uma "
+                    "página antes de concluir a coleta."
+                )
             seen_pages.add(signature)
             next_button = await self._next_page(page)
             if next_button is None:
+                if (
+                    pagination_state is not None
+                    and pagination_state[0] < pagination_state[1]
+                ):
+                    raise RuntimeError(
+                        f"A categoria {category['name']} informa a página "
+                        f"{pagination_state[0]} de {pagination_state[1]}, mas o "
+                        "botão para avançar está indisponível."
+                    )
+                if (
+                    category["count"] is not None
+                    and len(products) < category["count"]
+                ):
+                    raise RuntimeError(
+                        f"A categoria {category['name']} informou "
+                        f"{category['count']} produtos, mas só foram encontrados "
+                        f"{len(products)} e não há próxima página."
+                    )
                 break
-            before = len(products)
+            previous_url = page.url
+            previous_page = (
+                pagination_state[0] if pagination_state is not None else None
+            )
             await next_button.click()
-            await page.wait_for_timeout(1000)
-            page_links = await self._product_links_on_page(page)
-            products.update(page_links)
-            if len(products) == before:
-                break
+            changed = False
+            for _ in range(20):
+                await page.wait_for_timeout(250)
+                new_state = await self._pagination_state(page)
+                if (
+                    previous_page is not None
+                    and new_state is not None
+                    and new_state[0] > previous_page
+                ):
+                    changed = True
+                    break
+                if page.url != previous_url:
+                    changed = True
+                    break
+            if not changed:
+                raise RuntimeError(
+                    f"Não foi possível confirmar a mudança de página na categoria "
+                    f"{category['name']}."
+                )
+        else:
+            raise RuntimeError(
+                f"A coleta da categoria {category['name']} ultrapassou o limite "
+                "de 500 páginas."
+            )
         return products
 
     async def get_product_details_and_history(

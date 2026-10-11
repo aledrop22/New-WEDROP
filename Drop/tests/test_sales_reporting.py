@@ -23,6 +23,16 @@ from wedrop_monitor_sistema import (
 
 
 class SalesReportingTests(unittest.TestCase):
+    def test_pagination_state_parses_current_and_last_page(self):
+        self.assertEqual(
+            WedropMonitor._parse_pagination_state("Página 1 de 2"), (1, 2)
+        )
+        self.assertEqual(
+            WedropMonitor._parse_pagination_state("Página 5 de 5"), (5, 5)
+        )
+        self.assertIsNone(WedropMonitor._parse_pagination_state("Página 3 de 2"))
+        self.assertIsNone(WedropMonitor._parse_pagination_state("Sem paginação"))
+
     def test_parses_date_formats_and_quantities(self):
         for value in ("10/10/2026 15:42:08", "2026-10-10T15:42:08"):
             parsed = parse_event_datetime(value)
