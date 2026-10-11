@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
+import os
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any
+import unicodedata
 
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from sales_reporting import SalesRepository, load_local_environment
 from wedrop_monitor_sistema import DB_FILE, WedropMonitor
@@ -20,6 +21,43 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
+
+CATEGORY_NAMES = (
+    "Cozinha",
+    "Organização",
+    "Limpeza e Lavanderia",
+    "Banheiro",
+    "Decoração e Têxteis",
+    "Eletroportáteis",
+    "Brinquedos",
+    "Papelaria e Escritório",
+    "Ferramentas e Automotivo",
+    "Esporte e Lazer",
+    "Pets",
+    "Beleza e Cuidado Pessoal",
+    "Moda, Malas e Acessórios",
+    "Natal e Festas",
+)
+APP_SECRETS = (
+    "WEDROP_EMAIL",
+    "WEDROP_PASSWORD",
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_KEY",
+)
+
+
+def _load_streamlit_secrets() -> None:
+    try:
+        secrets = st.secrets.to_dict()
+    except StreamlitSecretNotFoundError:
+        return
+    for name in APP_SECRETS:
+        if not os.environ.get(name) and name in secrets:
+            os.environ[name] = str(secrets[name])
+
+
+_load_streamlit_secrets()
 
 
 def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
@@ -41,9 +79,33 @@ def _run_catalog_sync() -> None:
             )
         st.success("Catálogo atualizado e sincronizado.")
     except Exception as exc:
-        st.error(f"Falha na coleta: {exc}")
+        message = str(exc)
+        if message.startswith("Supabase não configurado"):
+            st.error(
+                "A coleta não iniciou porque o Streamlit Cloud não recebeu as "
+                "credenciais do Supabase. Abra App settings > Secrets e configure "
+                "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY. Configure também "
+                "WEDROP_EMAIL e WEDROP_PASSWORD para o login no catálogo."
+            )
+        else:
+            st.error(f"Falha na coleta: {message}")
     finally:
         monitor.close()
+
+
+def _status_bucket(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", (value or "").casefold())
+    normalized = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    ).strip()
+    if any(
+        marker in normalized
+        for marker in ("inativ", "desativ", "inactive", "disabled")
+    ):
+        return "Inativos"
+    if normalized in {"ativo", "active", "true", "1", "sim"}:
+        return "Ativos"
+    return "Sem status"
 
 
 def main() -> None:
@@ -53,10 +115,10 @@ def main() -> None:
     )
 
     with st.sidebar:
-        st.header("Categorias e período")
+        st.header("Filtro de período")
         selected_period = st.date_input(
             "Período de análise",
-            value=(date.today() - timedelta(days=6), date.today()),
+            value=(date.today(), date.today()),
             max_value=date.today(),
             key="activity_period",
         )
@@ -71,56 +133,112 @@ def main() -> None:
         if st.button("Atualizar catálogo e históricos", type="primary"):
             _run_catalog_sync()
 
-    if not Path(DB_FILE).exists():
-        st.info("Ainda não há coleta salva. Atualize o catálogo para iniciar o histórico.")
-        return
-
     repository = SalesRepository(DB_FILE)
     try:
-        categories = repository.category_activity(start_day, end_day)
-        category_names = {row["name"] for row in categories}
+        stored_categories = repository.category_activity(start_day, end_day)
+        activity_by_name = {row["name"]: row for row in stored_categories}
+        category_names = list(CATEGORY_NAMES)
+        category_names.extend(
+            name for name in activity_by_name if name not in category_names
+        )
         selected_category = st.session_state.get("selected_category")
         if selected_category not in category_names:
             selected_category = None
             st.session_state.pop("selected_category", None)
 
-        with st.sidebar:
-            if st.button("Todas as categorias", use_container_width=True):
-                st.session_state.pop("selected_category", None)
-                selected_category = None
-
-            if not categories:
-                st.info("Nenhuma categoria foi mapeada ainda.")
-            for category in categories:
-                category_name = category["name"]
-                category_key = hashlib.sha1(
-                    category["category_url"].encode("utf-8")
-                ).hexdigest()[:12]
-                label = (
-                    f"{category_name}\n"
-                    f"Vendeu {category['units_sold']} · "
-                    f"Reposição {category['units_restocked']}"
+        sales_label = "Vendas no dia" if start_day == end_day else "Vendas no período"
+        restock_label = (
+            "Reposição no dia" if start_day == end_day else "Reposição no período"
+        )
+        st.caption(f"Período: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}")
+        st.subheader("Categorias do catálogo WeDrop")
+        st.caption(
+            "As categorias permanecem fixas na lista. Totais e status são preenchidos "
+            "conforme o catálogo e o histórico forem sincronizados."
+        )
+        for offset in range(0, len(category_names), 4):
+            category_columns = st.columns(4)
+            for index, (column, category_name) in enumerate(
+                zip(category_columns, category_names[offset : offset + 4]),
+                start=offset,
+            ):
+                activity = activity_by_name.get(category_name)
+                values = (
+                    dict(activity)
+                    if activity is not None
+                    else {
+                        "expected_products": None,
+                        "mapped_products": 0,
+                        "units_sold": 0,
+                        "units_restocked": 0,
+                        "active_products": 0,
+                        "inactive_products": 0,
+                        "products_without_status": 0,
+                    }
                 )
-                if st.button(
-                    label,
-                    key=f"category_{category_key}",
-                    type=(
-                        "primary"
-                        if category_name == selected_category
-                        else "secondary"
-                    ),
-                    use_container_width=True,
-                ):
-                    st.session_state["selected_category"] = category_name
-                    selected_category = category_name
+                with column:
+                    with st.container(border=True):
+                        st.markdown(f"### {category_name}")
+                        expected = values["expected_products"]
+                        st.caption(
+                            "Produtos no site: "
+                            + (
+                                f"{expected:,}".replace(",", ".")
+                                if expected is not None
+                                else "—"
+                            )
+                        )
+                        first_metric, second_metric = st.columns(2)
+                        first_metric.metric(sales_label, values["units_sold"])
+                        second_metric.metric(restock_label, values["units_restocked"])
+                        st.caption(
+                            f"Ativos: {values['active_products']} · "
+                            f"Inativos: {values['inactive_products']}"
+                        )
+                        st.caption(
+                            f"Mapeados: {values['mapped_products']} · "
+                            f"Sem status: {values['products_without_status']}"
+                        )
+                        if values["inactive_products"]:
+                            st.error(
+                                f"⚠️ {values['inactive_products']} produto(s) inativo(s)"
+                            )
+                        if st.button(
+                            "Abrir produtos",
+                            key=f"open_category_{index}",
+                            type=(
+                                "primary"
+                                if category_name == selected_category
+                                else "secondary"
+                            ),
+                            use_container_width=True,
+                        ):
+                            st.session_state["selected_category"] = category_name
+                            selected_category = category_name
+                            st.rerun()
 
+        categories = [
+            activity_by_name.get(
+                name,
+                {
+                    "name": name,
+                    "units_sold": 0,
+                    "units_restocked": 0,
+                    "active_products": 0,
+                    "inactive_products": 0,
+                    "products_without_status": 0,
+                    "mapped_products": 0,
+                    "expected_products": None,
+                },
+            )
+            for name in category_names
+        ]
         total_sales = sum(row["units_sold"] for row in categories)
         total_restocked = sum(row["units_restocked"] for row in categories)
         col1, col2, col3 = st.columns(3)
         col1.metric("Categorias", len(categories))
         col2.metric("Unidades vendidas", total_sales)
         col3.metric("Unidades repostas", total_restocked)
-        st.caption(f"Período: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}")
 
         daily_activity = repository.category_daily_activity(
             start_day, end_day, selected_category
@@ -153,63 +271,102 @@ def main() -> None:
         )
 
         if selected_category:
+            if st.button("Fechar detalhes da categoria"):
+                st.session_state.pop("selected_category", None)
+                st.rerun()
             selected_row = next(
                 row for row in categories if row["name"] == selected_category
             )
             st.subheader(selected_category)
-            category_col1, category_col2 = st.columns(2)
-            category_col1.metric("Vendeu no período", selected_row["units_sold"])
-            category_col2.metric("Reabasteceu no período", selected_row["units_restocked"])
+            category_col1, category_col2, category_col3 = st.columns(3)
+            category_col1.metric("Produtos ativos", selected_row["active_products"])
+            category_col2.metric("Produtos inativos", selected_row["inactive_products"])
+            category_col3.metric(
+                "Produtos sem status", selected_row["products_without_status"]
+            )
 
-            products = repository.products_activity_for_category(
+            products = repository.products_for_category_period(
                 selected_category, start_day, end_day
             )
             if products:
-                st.subheader("Produtos movimentados")
-                for offset in range(0, len(products), 2):
-                    product_columns = st.columns(2)
-                    for column, product in zip(
-                        product_columns, products[offset : offset + 2]
-                    ):
-                        with column:
-                            with st.container(border=True):
-                                st.markdown(f"**{product['name']}**")
-                                st.caption(
-                                    f"SKU: {product['sku'] or 'não informado'}"
-                                )
-                                sold_col, restock_col = st.columns(2)
-                                sold_col.metric("Vendido", product["units_sold"])
-                                restock_col.metric(
-                                    "Reposto", product["units_restocked"]
-                                )
-                product_chart = _chart_rows(products, "Unidades vendidas")
+                status_filter = st.radio(
+                    "Filtrar produtos",
+                    ("Todos", "Ativos", "Inativos", "Sem status"),
+                    horizontal=True,
+                )
+                classified_products = [
+                    (product, _status_bucket(product["is_active"]))
+                    for product in products
+                ]
+                filtered_products = [
+                    (product, status)
+                    for product, status in classified_products
+                    if status_filter == "Todos" or status == status_filter
+                ]
+                st.subheader("Produtos da categoria")
+                st.dataframe(
+                    [
+                        {
+                            "Produto": product["url"],
+                            "SKU": product["sku"] or "",
+                            "Status": status,
+                            "Vendido": product["units_sold"],
+                            "Reposto": product["units_restocked"],
+                            "Estoque": product["stock"] or "",
+                            "Saldo real": product["real_balance"] or "",
+                        }
+                        for product, status in filtered_products
+                    ],
+                    column_config={
+                        "Produto": st.column_config.LinkColumn(
+                            "Produto", display_text="Abrir no WeDrop"
+                        )
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                )
+                chart_products = [
+                    product
+                    for product, _ in filtered_products
+                    if product["units_sold"] or product["units_restocked"]
+                ]
+                product_chart = _chart_rows(
+                    chart_products,
+                    "Unidades vendidas",
+                )
                 product_chart["Unidades repostas"] = [
-                    product["units_restocked"] for product in products
+                    product["units_restocked"]
+                    for product in chart_products
                 ]
                 st.subheader("Vendas e reposições por produto")
-                st.bar_chart(
-                    product_chart,
-                    x="Produto",
-                    y=["Unidades vendidas", "Unidades repostas"],
-                    height=420,
-                )
+                if chart_products:
+                    st.bar_chart(
+                        product_chart,
+                        x="Produto",
+                        y=["Unidades vendidas", "Unidades repostas"],
+                        height=420,
+                    )
+                else:
+                    st.info("Não há produtos neste filtro para o período selecionado.")
             else:
-                st.info("Não houve vendas nem reposições nesta categoria no período.")
-        else:
-            st.subheader("Movimentações por categoria")
-            if categories:
-                st.bar_chart(
-                    {
-                        "Categoria": [row["name"] for row in categories],
-                        "Vendas": [row["units_sold"] for row in categories],
-                        "Reposição": [row["units_restocked"] for row in categories],
-                    },
-                    x="Categoria",
-                    y=["Vendas", "Reposição"],
-                    height=420,
+                st.info(
+                    "Ainda não há produtos desta categoria no banco. "
+                    "Sincronize o catálogo para carregar produtos e status."
                 )
-            else:
-                st.info("Nenhuma categoria foi mapeada ainda.")
+
+        st.subheader("Movimentações por categoria")
+        st.bar_chart(
+            {
+                "Categoria": [row["name"] for row in categories],
+                "Vendas": [row["units_sold"] for row in categories],
+                "Reposição": [row["units_restocked"] for row in categories],
+            },
+            x="Categoria",
+            y=["Vendas", "Reposição"],
+            height=420,
+        )
+
+        if not selected_category:
 
             top_products = repository.top_products_for_period(start_day, end_day)
             st.subheader("20 produtos mais vendidos no período")

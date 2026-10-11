@@ -303,7 +303,37 @@ class SalesRepository:
                        COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
                                          THEN e.quantity ELSE 0 END), 0) AS units_sold,
                        COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
-                                         THEN e.quantity ELSE 0 END), 0) AS units_restocked
+                                         THEN e.quantity ELSE 0 END), 0) AS units_restocked,
+                       COUNT(DISTINCT CASE
+                           WHEN (
+                               LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%ativo%'
+                               OR LOWER(TRIM(COALESCE(p.is_active, '')))
+                                   IN ('active', 'true', '1', 'sim')
+                           )
+                             AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%inativ%'
+                             AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%desativ%'
+                             AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%inactive%'
+                             AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%disabled%'
+                           THEN p.product_id END) AS active_products,
+                       COUNT(DISTINCT CASE
+                           WHEN LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%inativ%'
+                             OR LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%desativ%'
+                             OR LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%inactive%'
+                             OR LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%disabled%'
+                             OR LOWER(TRIM(COALESCE(p.is_active, ''))) IN ('false', '0', 'não', 'nao')
+                           THEN p.product_id END) AS inactive_products,
+                       COUNT(DISTINCT CASE
+                           WHEN TRIM(COALESCE(p.is_active, '')) = ''
+                             OR (
+                                 LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%ativo%'
+                                 AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%inativ%'
+                                 AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%desativ%'
+                                 AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%active%'
+                                 AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT LIKE '%disabled%'
+                                 AND LOWER(TRIM(COALESCE(p.is_active, ''))) NOT IN
+                                     ('true', 'false', '1', '0', 'sim', 'não', 'nao')
+                             )
+                           THEN p.product_id END) AS products_without_status
                 FROM categories AS c
                 LEFT JOIN products AS p ON p.category = c.name
                 LEFT JOIN stock_events AS e
@@ -314,6 +344,34 @@ class SalesRepository:
                 ORDER BY c.name COLLATE NOCASE
                 """,
                 (start_at, end_at),
+            )
+        )
+
+    def products_for_category_period(
+        self, category_name: str, start_day: date, end_day: date
+    ) -> list[sqlite3.Row]:
+        start_at, end_at = self._period_bounds(start_day, end_day)
+        return list(
+            self.connection.execute(
+                """
+                SELECT p.product_id, p.name, p.sku, p.url, p.is_active,
+                       p.stock, p.real_balance,
+                       COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
+                                         THEN e.quantity ELSE 0 END), 0) AS units_sold,
+                       COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
+                                         THEN e.quantity ELSE 0 END), 0) AS units_restocked
+                FROM products AS p
+                LEFT JOIN stock_events AS e
+                       ON e.product_id = p.product_id
+                      AND e.event_at >= ?
+                      AND e.event_at < ?
+                WHERE p.category = ?
+                GROUP BY p.product_id, p.name, p.sku, p.url, p.is_active,
+                         p.stock, p.real_balance
+                ORDER BY units_sold DESC, units_restocked DESC,
+                         p.name COLLATE NOCASE
+                """,
+                (start_at, end_at, category_name),
             )
         )
 

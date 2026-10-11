@@ -1,6 +1,6 @@
 # Painel WeDrop
 
-O painel atualmente recomendado é `app_monitoramento_vendas.py`. No sidebar, selecione um período e consulte as categorias com unidades vendidas e reabastecidas. Ao selecionar uma categoria, o painel exibe os produtos movimentados, totais por produto e gráficos diários e por produto. A visão geral apresenta o comparativo por categoria e os 20 produtos mais vendidos no período.
+O painel atualmente recomendado é `app_monitoramento_vendas.py`. Ele mantém visíveis as 14 categorias do catálogo WeDrop. Cada cartão apresenta o total informado pelo site, vendas, reposições e quantidades mapeadas de produtos ativos, inativos ou sem status. Selecione uma categoria para filtrar a tabela de produtos por status; o nome do produto abre o item no WeDrop e o SKU pode ser copiado da tabela.
 
 ## Executar
 
@@ -10,7 +10,16 @@ Configure `.env` conforme `.env.example`, execute uma vez `supabase_schema.sql` 
 streamlit run app_monitoramento_vendas.py
 ```
 
-O painel não solicita e-mail ou senha. Eles são lidos de `WEDROP_EMAIL` e `WEDROP_PASSWORD` no `.env` (ou no ambiente do processo). Se a sessão salva estiver válida, o login é reutilizado; se estiver vencida, a coleta autentica automaticamente, salva os cookies e continua sem etapa separada.
+O painel não solicita e-mail ou senha. Localmente, eles são lidos de `WEDROP_EMAIL` e `WEDROP_PASSWORD` no `.env` (ou no ambiente do processo). No Streamlit Community Cloud, o `.env` local não é enviado: configure as credenciais em **App settings > Secrets**, usando nomes TOML no nível superior:
+
+```toml
+WEDROP_EMAIL = "seu-email"
+WEDROP_PASSWORD = "sua-senha"
+SUPABASE_URL = "https://seu-projeto.supabase.co"
+SUPABASE_SERVICE_ROLE_KEY = "sua-chave-de-servico"
+```
+
+Nunca publique a chave de serviço nem coloque esses valores no repositório. Se a sessão salva estiver válida, o login é reutilizado; se estiver vencida, a coleta autentica, salva os cookies e continua sem etapa separada.
 
 Use **Atualizar catálogo e históricos** para executar o login, o mapeamento e a sincronização sem obter cookies em uma etapa separada. O scraper grava no banco SQLite local e nas tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` do Supabase. Falhas de configuração ou gravação remota são mostradas como erro.
 

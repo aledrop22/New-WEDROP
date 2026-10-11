@@ -100,6 +100,7 @@ class SalesReportingTests(unittest.TestCase):
                         "category": "Categoria A",
                         "url": "https://example.com/products/a1",
                         "sku": "A1",
+                        "is_active": "Ativo",
                         "stock_history": [
                             {
                                 "type": "Venda",
@@ -124,6 +125,7 @@ class SalesReportingTests(unittest.TestCase):
                         "category": "Categoria A",
                         "url": "https://example.com/products/a2",
                         "sku": "A2",
+                        "is_active": "Inativo",
                         "stock_history": [
                             {
                                 "type": "Venda",
@@ -137,6 +139,7 @@ class SalesReportingTests(unittest.TestCase):
                         "name": "Produto B1",
                         "category": "Categoria B",
                         "url": "https://example.com/products/b1",
+                        "is_active": "Ativo",
                         "stock_history": [
                             {
                                 "type": "Venda",
@@ -157,7 +160,18 @@ class SalesReportingTests(unittest.TestCase):
             }
         self.assertEqual(categories["Categoria A"]["units_sold"], 9)
         self.assertEqual(categories["Categoria A"]["units_restocked"], 5)
+        self.assertEqual(categories["Categoria A"]["active_products"], 1)
+        self.assertEqual(categories["Categoria A"]["inactive_products"], 1)
+        self.assertEqual(categories["Categoria A"]["products_without_status"], 0)
         self.assertEqual(categories["Categoria B"]["units_sold"], 8)
+
+        category_products = repository.products_for_category_period(
+            "Categoria A", date(2026, 10, 10), date(2026, 10, 12)
+        )
+        self.assertEqual(
+            [(row["name"], row["is_active"]) for row in category_products],
+            [("Produto A1", "Ativo"), ("Produto A2", "Inativo")],
+        )
 
         products = repository.products_activity_for_category(
             "Categoria A", date(2026, 10, 10), date(2026, 10, 12)

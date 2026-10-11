@@ -4,15 +4,15 @@ O fluxo principal está concentrado em `wedrop_monitor_sistema.py`: ele lê a co
 
 ## Configuração inicial
 
-1. Copie `.env.example` para `.env` dentro de `Drop`.
+1. Para execução local, copie `.env.example` para `.env` dentro de `Drop`.
 2. Preencha `WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`.
 3. No SQL Editor do projeto Supabase, execute uma vez o conteúdo de `supabase_schema.sql`.
 4. Instale as dependências: `python -m pip install -r requirements.txt`.
 5. Execute o mapeamento integrado: `python wedrop_monitor_sistema.py`.
 
-O arquivo `.env` e os cookies locais não devem ser enviados ao Git. A chave de serviço Supabase fica somente no processo local do scraper; não a coloque em JavaScript ou código do navegador.
+O arquivo `.env` e os cookies locais não devem ser enviados ao Git. A chave de serviço Supabase fica somente no processo local do scraper; não a coloque em JavaScript ou código do navegador. Para o Streamlit Community Cloud, o `.env` do computador não é publicado com o app. Configure as quatro variáveis em **App settings > Secrets** no formato TOML (uma variável por linha, entre aspas). O dashboard lê as chaves do Secrets sem expor seus valores.
 
-O programa verifica a sessão do catálogo a cada execução. Se ela tiver expirado, usa as credenciais configuradas, valida o login, salva `storage_state.json` e continua a coleta na mesma execução. Em terminal interativo, e-mail e senha podem ser solicitados sem gravar a senha; no painel, são lidos do `.env`/ambiente e nenhum campo de credenciais é exibido. O processo falha explicitamente se o login, a configuração do Supabase ou uma gravação remota falhar.
+O programa verifica a sessão do catálogo a cada execução. Se ela tiver expirado, usa as credenciais configuradas, valida o login, salva `storage_state.json` e continua a coleta na mesma execução. Em terminal interativo, e-mail e senha podem ser solicitados sem gravar a senha; no painel, são lidos do `.env`/ambiente ou de Streamlit Secrets e nenhum campo de credenciais é exibido. O processo falha explicitamente se o login, a configuração do Supabase ou uma gravação remota falhar.
 
 ## Dados mantidos
 
@@ -25,13 +25,13 @@ As tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` recebe
 
 ## Painel e rotina diária
 
-Inicie o painel com `streamlit run app_monitoramento_vendas.py` ou `start_streamlit.bat`. Use **Atualizar catálogo e históricos** para executar a mesma coleta e renovar a sessão quando necessário. No sidebar, selecione o intervalo de datas e uma categoria para visualizar totais de vendas e reposições, produtos movimentados e gráficos diários e por produto. Sem categoria selecionada, o painel mostra o comparativo entre categorias e o ranking dos 20 produtos mais vendidos no período.
+Inicie o painel com `streamlit run app_monitoramento_vendas.py` ou `start_streamlit.bat`. Ele mantém fixas as 14 categorias exibidas no catálogo, inclusive antes da primeira coleta. Cada card mostra o total reportado pelo site, vendas e reposições no dia (ou no intervalo escolhido), além da contagem de produtos mapeados ativos, inativos e sem status. Ao abrir uma categoria, filtre a tabela por status; o nome do produto é um link direto para o WeDrop e o SKU pode ser copiado. Use **Atualizar catálogo e históricos** para executar a coleta e renovar a sessão quando necessário.
 
 Para manter a série diária, execute o scraper uma vez por dia pelo Agendador de Tarefas do Windows. O comando é `python wedrop_monitor_sistema.py`; ele faz autenticação, mapeamento e sincronização numa única execução.
 
 ## Troubleshooting
 
-- **Supabase não configurado:** verifique as variáveis no `.env` e reinicie o terminal ou painel.
+- **Supabase não configurado:** localmente, verifique as variáveis no `.env`. No Streamlit Cloud, configure `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` em **App settings > Secrets**; configure também `WEDROP_EMAIL` e `WEDROP_PASSWORD` para autenticar. O `.env` local não é enviado à hospedagem.
 - **Tabela inexistente/permissão negada:** execute `supabase_schema.sql` no SQL Editor e mantenha a chave de serviço apenas no processo local.
 - **Login recusado:** confira as credenciais; cookies só são salvos depois de confirmar a navegação autenticada.
 - **Categoria com cobertura incompleta:** o painel compara o total reportado com os links de produtos encontrados; confira se o site carrega paginação/lazy-loading ou se mudou sua interface.
