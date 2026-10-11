@@ -150,72 +150,6 @@ def main() -> None:
         restock_label = (
             "Reposição no dia" if start_day == end_day else "Reposição no período"
         )
-        st.caption(f"Período: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}")
-        st.subheader("Categorias do catálogo WeDrop")
-        st.caption(
-            "As categorias permanecem fixas na lista. Totais e status são preenchidos "
-            "conforme o catálogo e o histórico forem sincronizados."
-        )
-        for offset in range(0, len(category_names), 4):
-            category_columns = st.columns(4)
-            for index, (column, category_name) in enumerate(
-                zip(category_columns, category_names[offset : offset + 4]),
-                start=offset,
-            ):
-                activity = activity_by_name.get(category_name)
-                values = (
-                    dict(activity)
-                    if activity is not None
-                    else {
-                        "expected_products": None,
-                        "mapped_products": 0,
-                        "units_sold": 0,
-                        "units_restocked": 0,
-                        "active_products": 0,
-                        "inactive_products": 0,
-                        "products_without_status": 0,
-                    }
-                )
-                with column:
-                    with st.container(border=True):
-                        st.markdown(f"### {category_name}")
-                        expected = values["expected_products"]
-                        st.caption(
-                            "Produtos no site: "
-                            + (
-                                f"{expected:,}".replace(",", ".")
-                                if expected is not None
-                                else "—"
-                            )
-                        )
-                        first_metric, second_metric = st.columns(2)
-                        first_metric.metric(sales_label, values["units_sold"])
-                        second_metric.metric(restock_label, values["units_restocked"])
-                        st.caption(
-                            f"Ativos: {values['active_products']} · "
-                            f"Inativos: {values['inactive_products']}"
-                        )
-                        st.caption(
-                            f"Mapeados: {values['mapped_products']} · "
-                            f"Sem status: {values['products_without_status']}"
-                        )
-                        if values["inactive_products"]:
-                            st.error(
-                                f"⚠️ {values['inactive_products']} produto(s) inativo(s)"
-                            )
-                        if st.button(
-                            "Abrir produtos",
-                            key=f"open_category_{index}",
-                            type=(
-                                "primary"
-                                if category_name == selected_category
-                                else "secondary"
-                            ),
-                            use_container_width=True,
-                        ):
-                            st.session_state["selected_category"] = category_name
-                            selected_category = category_name
-                            st.rerun()
 
         categories = [
             activity_by_name.get(
@@ -233,6 +167,71 @@ def main() -> None:
             )
             for name in category_names
         ]
+        with st.sidebar:
+            st.divider()
+            st.subheader("Categorias do catálogo")
+            st.caption(
+                f"Período: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}. "
+                "Selecione uma categoria para ver os produtos."
+            )
+            if st.button(
+                "Visão geral",
+                key="show_all_categories",
+                type="secondary",
+                use_container_width=True,
+            ):
+                st.session_state.pop("selected_category", None)
+                selected_category = None
+
+            for index, category_name in enumerate(category_names):
+                values = activity_by_name.get(category_name)
+                if values is None:
+                    values = {
+                        "expected_products": None,
+                        "mapped_products": 0,
+                        "units_sold": 0,
+                        "units_restocked": 0,
+                        "active_products": 0,
+                        "inactive_products": 0,
+                    }
+                with st.container(border=True):
+                    st.markdown(f"**{category_name}**")
+                    expected = values["expected_products"]
+                    st.caption(
+                        "Produtos no site: "
+                        + (
+                            f"{expected:,}".replace(",", ".")
+                            if expected is not None
+                            else "—"
+                        )
+                    )
+                    st.caption(
+                        f"{sales_label}: **{values['units_sold']}**  \n"
+                        f"{restock_label}: **{values['units_restocked']}**"
+                    )
+                    st.caption(
+                        f"Ativos: {values['active_products']} · "
+                        f"Inativos: {values['inactive_products']}"
+                    )
+                    if values["inactive_products"]:
+                        st.error(
+                            f"⚠️ {values['inactive_products']} produto(s) inativo(s)"
+                        )
+                    if st.button(
+                        "Abrir produtos",
+                        key=f"open_category_{index}",
+                        type=(
+                            "primary"
+                            if category_name == selected_category
+                            else "secondary"
+                        ),
+                        use_container_width=True,
+                    ):
+                        st.session_state["selected_category"] = category_name
+                        selected_category = category_name
+                        st.rerun()
+
+        st.caption(f"Período analisado: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}")
         total_sales = sum(row["units_sold"] for row in categories)
         total_restocked = sum(row["units_restocked"] for row in categories)
         col1, col2, col3 = st.columns(3)

@@ -1,6 +1,6 @@
 # Painel WeDrop
 
-O painel atualmente recomendado é `app_monitoramento_vendas.py`. Ele mantém visíveis as 14 categorias do catálogo WeDrop. Cada cartão apresenta o total informado pelo site, vendas, reposições e quantidades mapeadas de produtos ativos, inativos ou sem status. Selecione uma categoria para filtrar a tabela de produtos por status; o nome do produto abre o item no WeDrop e o SKU pode ser copiado da tabela.
+O painel atualmente recomendado é `app_monitoramento_vendas.py`. A barra lateral mantém visíveis, uma abaixo da outra, as 14 categorias do catálogo WeDrop. Cada cartão apresenta o total informado pelo site, vendas, reposições e quantidades de produtos ativos e inativos. Selecione uma categoria para abrir no conteúdo principal a tabela de produtos, filtrável por status; o nome do produto abre o item no WeDrop e o SKU pode ser copiado da tabela.
 
 ## Executar
 

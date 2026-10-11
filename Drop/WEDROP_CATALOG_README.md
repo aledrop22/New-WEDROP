@@ -25,7 +25,7 @@ As tabelas `wedrop_categories`, `wedrop_products` e `wedrop_stock_events` recebe
 
 ## Painel e rotina diária
 
-Inicie o painel com `streamlit run app_monitoramento_vendas.py` ou `start_streamlit.bat`. Ele mantém fixas as 14 categorias exibidas no catálogo, inclusive antes da primeira coleta. Cada card mostra o total reportado pelo site, vendas e reposições no dia (ou no intervalo escolhido), além da contagem de produtos mapeados ativos, inativos e sem status. Ao abrir uma categoria, filtre a tabela por status; o nome do produto é um link direto para o WeDrop e o SKU pode ser copiado. Use **Atualizar catálogo e históricos** para executar a coleta e renovar a sessão quando necessário.
+Inicie o painel com `streamlit run app_monitoramento_vendas.py` ou `start_streamlit.bat`. A barra lateral mantém fixas as 14 categorias exibidas no catálogo, em uma lista vertical, inclusive antes da primeira coleta. Cada card mostra o total reportado pelo site, vendas e reposições no dia (ou no intervalo escolhido), além da contagem de produtos mapeados ativos e inativos. Ao abrir uma categoria, os produtos aparecem na página principal; filtre a tabela por status. O nome do produto é um link direto para o WeDrop e o SKU pode ser copiado. Use **Atualizar catálogo e históricos** para executar a coleta e renovar a sessão quando necessário.
 
 Para manter a série diária, execute o scraper uma vez por dia pelo Agendador de Tarefas do Windows. O comando é `python wedrop_monitor_sistema.py`; ele faz autenticação, mapeamento e sincronização numa única execução.
 
