@@ -160,6 +160,54 @@ def _sales_count(value: str) -> str:
     return str(int(re.sub(r"\D", "", match.group(1)))) if match else ""
 
 
+def calculate_current_balance(stock_history: list[dict]) -> int:
+    """Calcula o saldo atual baseado no histórico de movimentações.
+
+    Lógica:
+    1. Se houver um saldo positivo no histórico, usa como base
+    2. Soma todas as entradas (+unidades)
+    3. Subtrai todas as saídas (-unidades)
+    4. Retorna o saldo calculado
+    """
+    if not stock_history:
+        return 0
+
+    balance = 0
+    has_initial_balance = False
+
+    # Verificar se há um saldo inicial no histórico
+    for movement in stock_history:
+        quantity = movement.get("quantity", "")
+        movement_type = movement.get("type", "").upper()
+
+        # Se não for entrada/saída e tem número, pode ser saldo inicial
+        if movement_type not in {"ENTRADA", "SAÍDA", "SAIDA"}:
+            qty_match = re.search(r"\d+", quantity)
+            if qty_match:
+                qty = int(qty_match.group())
+                # Se for positivo e não tem + ou -, usa como saldo inicial
+                if qty > 0 and "+" not in quantity and "-" not in quantity:
+                    balance = qty
+                    has_initial_balance = True
+                    break
+
+    # Calcular baseado em entradas e saídas
+    for movement in stock_history:
+        quantity = movement.get("quantity", "")
+        movement_type = movement.get("type", "").upper()
+
+        if movement_type == "ENTRADA":
+            qty_match = re.search(r"\d+", quantity)
+            if qty_match:
+                balance += int(qty_match.group())
+        elif movement_type in {"SAÍDA", "SAIDA"}:
+            qty_match = re.search(r"\d+", quantity)
+            if qty_match:
+                balance -= int(qty_match.group())
+
+    return balance
+
+
 def _credential_values(
     email: str | None,
     password: str | None,
@@ -733,6 +781,9 @@ class WedropMonitor:
                 "nf_key": ""
             })
 
+        # Calcular saldo atual baseado no histórico
+        calculated_balance = calculate_current_balance(history)
+
         details = await extract_technical_specs(page)
         cnpj = value_for_label(page_text, ("CNPJ", "CNPJ do fornecedor"))
         origin = value_for_label(page_text, ("Estado de origem", "Origem"))
@@ -767,9 +818,14 @@ class WedropMonitor:
                 ("Estoque", "Disponibilidade", "Saldo disponível", "Estoque disponível"),
             ) or availability
 
+        # Usar saldo calculado se não encontrou na página
+        if not stock_value or stock_value in {"DISPONÍVEL", "INDISPONÍVEL"}:
+            if calculated_balance > 0:
+                stock_value = str(calculated_balance)
+
         stock = stock_value
-        real_balance = value_for_label(page_text, ("Saldo real", "Saldo")) or stock_value
-        total_stock = value_for_label(page_text, ("Estoque total", "Total em estoque")) or stock_value
+        real_balance = value_for_label(page_text, ("Saldo real", "Saldo")) or str(calculated_balance) if calculated_balance > 0 else stock_value
+        total_stock = value_for_label(page_text, ("Estoque total", "Total em estoque")) or str(calculated_balance) if calculated_balance > 0 else stock_value
         sales = value_for_label(page_text, ("Vendas", "Número de vendas"))
         sales_count = _sales_count(sales) or _sales_count(
             details.get("number_sales", "")
