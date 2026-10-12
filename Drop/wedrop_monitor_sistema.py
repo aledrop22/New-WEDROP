@@ -756,7 +756,6 @@ class WedropMonitor:
             if await stock_node.count():
                 stock_text = (await stock_node.inner_text()).strip()
                 # Verificar se é um número (saldo) e não apenas "DISPONÍVEL"
-                import re
                 if re.search(r'\d+', stock_text) and stock_text not in {"DISPONÍVEL", "INDISPONÍVEL"}:
                     stock_value = stock_text
                     break
