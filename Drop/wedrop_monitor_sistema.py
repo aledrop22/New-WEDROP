@@ -724,12 +724,41 @@ class WedropMonitor:
         details = await extract_technical_specs(page)
         cnpj = value_for_label(page_text, ("CNPJ", "CNPJ do fornecedor"))
         origin = value_for_label(page_text, ("Estado de origem", "Origem"))
-        stock = value_for_label(
-            page_text,
-            ("Estoque", "Disponibilidade", "Saldo disponível", "Estoque disponível"),
-        ) or availability
-        real_balance = value_for_label(page_text, ("Saldo real", "Saldo"))
-        total_stock = value_for_label(page_text, ("Estoque total", "Total em estoque"))
+
+        # Tentar extrair saldo de múltiplas fontes
+        stock_value = ""
+        real_balance_value = ""
+        total_stock_value = ""
+
+        # Tentar buscar saldo numérico em vários seletores
+        stock_selectors = [
+            'p[class*="1yd6l9q"]',
+            'span[class*="1yd6l9q"]',
+            'div[class*="1yd6l9q"]',
+            '[data-testid*="stock"]',
+            '[data-testid*="balance"]',
+        ]
+
+        for selector in stock_selectors:
+            stock_node = page.locator(selector).first
+            if await stock_node.count():
+                stock_text = (await stock_node.inner_text()).strip()
+                # Verificar se é um número (saldo) e não apenas "DISPONÍVEL"
+                import re
+                if re.search(r'\d+', stock_text) and stock_text not in {"DISPONÍVEL", "INDISPONÍVEL"}:
+                    stock_value = stock_text
+                    break
+
+        # Se não encontrou nos seletores, usar labels de texto
+        if not stock_value:
+            stock_value = value_for_label(
+                page_text,
+                ("Estoque", "Disponibilidade", "Saldo disponível", "Estoque disponível"),
+            ) or availability
+
+        stock = stock_value
+        real_balance = value_for_label(page_text, ("Saldo real", "Saldo")) or stock_value
+        total_stock = value_for_label(page_text, ("Estoque total", "Total em estoque")) or stock_value
         sales = value_for_label(page_text, ("Vendas", "Número de vendas"))
         sales_count = _sales_count(sales) or _sales_count(
             details.get("number_sales", "")
