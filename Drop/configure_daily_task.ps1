@@ -4,7 +4,7 @@ $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repositoryDir = Split-Path -Parent $projectDir
 $pythonPath = Join-Path $repositoryDir ".venv\Scripts\python.exe"
 $taskName = "WeDrop Daily Catalog Scrape"
-$scriptPath = Join-Path $projectDir "wedrop_monitor_sistema.py"
+$scriptPath = Join-Path $projectDir "wedrop_protected_runner.py"
 
 if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
     throw "Python virtual environment not found at $pythonPath"

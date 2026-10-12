@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
+from product_naming import clean_product_name
 from sales_reporting import (
     SalesRepository,
     SupabaseRepository,
@@ -509,10 +510,11 @@ class WedropMonitor:
                     category["count"] is not None
                     and len(products) < category["count"]
                 ):
-                    raise RuntimeError(
-                        f"A categoria {category['name']} informou "
+                    log_progress(
+                        f"AVISO: A categoria {category['name']} informou "
                         f"{category['count']} produtos, mas só foram encontrados "
-                        f"{len(products)} e não há próxima página."
+                        f"{len(products)} e não há próxima página. "
+                        "Continuando com os produtos encontrados."
                     )
                 break
             previous_url = page.url
@@ -549,35 +551,110 @@ class WedropMonitor:
     async def get_product_details_and_history(
         self, page, product_id: str, product_url: str, category_name: str
     ) -> dict:
-        await page.goto(product_url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(500)
-        if await page.locator('input[type="password"]').count():
-            raise RuntimeError(
-                "A sessão WeDrop expirou durante a coleta. Execute novamente para "
-                "autenticar e retomar o mapeamento."
-            )
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await page.goto(product_url, wait_until="domcontentloaded")
+                await page.wait_for_timeout(500)
+                if await page.locator('input[type="password"]').count():
+                    raise RuntimeError(
+                        "A sessão WeDrop expirou durante a coleta. Execute novamente para "
+                        "autenticar e retomar o mapeamento."
+                    )
 
-        name_node = page.locator("h1, h2").first
-        name = (await name_node.inner_text()).strip() if await name_node.count() else ""
-        if not name or name.casefold() in {"produto", "product"}:
-            page_title = (await page.title()).strip()
-            name = (
-                page_title
-                if page_title.casefold() not in {"wedrop", "produto", "product"}
-                else ""
-            )
-        page_text = await page.locator("body").inner_text()
+                # Tentar múltiplas fontes para o nome do produto - seletores específicos primeiro
+                name = ""
 
-        sku_ean_node = page.locator('p[class*="nk7nkj"]').first
-        sku_ean_text = (
-            (await sku_ean_node.inner_text()).strip()
-            if await sku_ean_node.count()
-            else page_text
-        )
+                # Seletores específicos do WeDrop
+                specific_selectors = [
+                    'h2.chakra-heading.css-18puvtl',
+                    'h1.chakra-heading',
+                    'h2.chakra-heading',
+                    '[class*="chakra-heading"]',
+                ]
+
+                for selector in specific_selectors:
+                    name_node = page.locator(selector).first
+                    if await name_node.count():
+                        candidate = (await name_node.inner_text()).strip()
+                        if candidate and candidate.casefold() not in {"produto", "product", "wedrop"}:
+                            name = candidate
+                            break
+
+                # Se não encontrou, tentar seletores genéricos
+                if not name or name.casefold() in {"produto", "product"}:
+                    name_node = page.locator("h1, h2").first
+                    name = (await name_node.inner_text()).strip() if await name_node.count() else ""
+
+                # Se ainda não encontrou, tentar outros seletores
+                if not name or name.casefold() in {"produto", "product"}:
+                    alternative_selectors = [
+                        'h1[class*="title"]',
+                        'h2[class*="title"]',
+                        'p[class*="title"]',
+                        'div[class*="title"]',
+                        '[data-testid*="product-name"]',
+                        '[data-testid*="product-title"]',
+                    ]
+                    for selector in alternative_selectors:
+                        alt_node = page.locator(selector).first
+                        if await alt_node.count():
+                            alt_name = (await alt_node.inner_text()).strip()
+                            if alt_name and alt_name.casefold() not in {"produto", "product", "wedrop"}:
+                                name = alt_name
+                                break
+
+                # Se ainda não tem nome, tentar do título da página
+                if not name or name.casefold() in {"produto", "product"}:
+                    page_title = (await page.title()).strip()
+                    # Remove prefixos comuns de WEDROP
+                    page_title = re.sub(r"^(?:we\s*drop|wedrop|we-drop)\s*[-–:]?\s*", "", page_title, flags=re.IGNORECASE)
+                    name = (
+                        page_title
+                        if page_title.casefold() not in {"wedrop", "produto", "product"}
+                        else ""
+                    )
+
+                page_text = await page.locator("body").inner_text()
+
+                sku_ean_node = page.locator('p.chakra-text.css-nk7nkj').first
+                sku_ean_text = (
+                    (await sku_ean_node.inner_text()).strip()
+                    if await sku_ean_node.count()
+                    else page.locator('p[class*="nk7nkj"]').first
+                )
+                if await sku_ean_node.count():
+                    sku_ean_text = (await sku_ean_node.inner_text()).strip()
+                else:
+                    sku_ean_text = page_text
+                break
+            except Exception as e:
+                if "Execution context was destroyed" in str(e) and attempt < max_retries - 1:
+                    log_progress(f"  Contexto destruído ao carregar produto {product_id}, tentando novamente ({attempt + 1}/{max_retries})...")
+                    await page.wait_for_timeout(1000)
+                    continue
+                raise
         sku_match = re.search(r"SKU:\s*([^|]+)", sku_ean_text, re.IGNORECASE)
         ean_match = re.search(r"EAN:\s*([^|]+)", sku_ean_text, re.IGNORECASE)
         price_node = page.locator('p[class*="1enygfq"], p[class*="1hulv5q"]').first
         price = (await price_node.inner_text()).strip() if await price_node.count() else ""
+
+        # Tentar extrair preço de outros seletores se o principal falhar
+        if not price:
+            alternative_price_selectors = [
+                'p[class*="price"]',
+                'span[class*="price"]',
+                'div[class*="price"]',
+                '[data-testid*="price"]',
+            ]
+            for selector in alternative_price_selectors:
+                alt_price_node = page.locator(selector).first
+                if await alt_price_node.count():
+                    alt_price = (await alt_price_node.inner_text()).strip()
+                    if re.search(r'R\$\s*[\d.,]+', alt_price):
+                        price = alt_price
+                        break
+
         availability_node = page.locator('span[class*="1dvt0g7"]').first
         availability = (
             (await availability_node.inner_text()).strip()
@@ -590,6 +667,14 @@ class WedropMonitor:
             if await description_panel.count()
             else ""
         )
+
+        # Clicar na aba de valores/estoque para capturar o saldo antes do histórico
+        stock_tab = page.get_by_role("tab", name=re.compile("(Valores|Estoque|Saldo)", re.I))
+        if await stock_tab.count():
+            await stock_tab.first.click()
+            await page.wait_for_timeout(400)
+            # Atualizar page_text após clicar na aba de estoque
+            page_text = await page.locator("body").inner_text()
 
         history_tab = page.get_by_role("tab", name=re.compile("Histórico de Estoque", re.I))
         if await history_tab.count():
@@ -627,6 +712,15 @@ class WedropMonitor:
                     }
                 )
 
+        # Se não houver histórico, adicionar mensagem informativa
+        if not history:
+            history.append({
+                "type": "NÃO HOUVE MOVIMENTAÇÃO DE SALDO",
+                "quantity": "",
+                "date": "",
+                "nf_key": ""
+            })
+
         details = await extract_technical_specs(page)
         cnpj = value_for_label(page_text, ("CNPJ", "CNPJ do fornecedor"))
         origin = value_for_label(page_text, ("Estado de origem", "Origem"))
@@ -646,9 +740,22 @@ class WedropMonitor:
         elif not status and re.search(r"\b(ativo|ativado)\b", page_text, re.I):
             status = "Ativo"
 
+        # Tentar extrair nome com limpeza
+        product_name = clean_product_name(name, description or details.get("description", ""))
+
+        # Se ainda não tem nome, usar fallbacks
+        if not product_name or len(product_name) < 3:
+            # Tentar usar SKU como nome
+            sku_value = sku_match.group(1).strip() if sku_match else details.get("sku", "")
+            if sku_value:
+                product_name = f"Produto {sku_value}"
+            else:
+                # Último recurso: usar ID e categoria
+                product_name = f"Produto {product_id} ({category_name})"
+
         return {
             "product_id": product_id,
-            "name": name,
+            "name": product_name,
             "category": category_name,
             "url": product_url,
             "sku": sku_match.group(1).strip() if sku_match else details.get("sku", ""),

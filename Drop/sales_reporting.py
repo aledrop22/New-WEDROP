@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import sqlite3
+import time
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -90,6 +92,7 @@ PRODUCT_FIELDS = (
     "number_sales",
     "updated_at",
 )
+TRANSIENT_SUPABASE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
 def load_local_environment() -> None:
@@ -568,17 +571,51 @@ class SupabaseRepository:
 
     def _upsert(self, table: str, rows: list[dict[str, Any]], conflict: str) -> None:
         for start in range(0, len(rows), 200):
-            response = self.session.post(
-                f"{self.base_url}/{table}",
-                params={"on_conflict": conflict},
-                json=rows[start : start + 200],
-                timeout=self.timeout,
-            )
-            if not response.ok:
-                raise RuntimeError(
-                    f"Supabase rejeitou gravação em {table} "
-                    f"(HTTP {response.status_code}): {response.text[:500]}"
+            for attempt in range(6):
+                try:
+                    response = self.session.post(
+                        f"{self.base_url}/{table}",
+                        params={"on_conflict": conflict},
+                        json=rows[start : start + 200],
+                        timeout=60,  # Aumentado de self.timeout para 60 segundos
+                    )
+                except requests.exceptions.RequestException as exc:
+                    if attempt == 5:
+                        raise RuntimeError(
+                            f"Falha de conexão ao gravar em {table} no Supabase "
+                            "após 6 tentativas."
+                        ) from exc
+                    logging.getLogger("wedrop.scraper").warning(
+                        "Falha temporária de conexão ao gravar em %s no Supabase "
+                        "(tentativa %s/6): %s",
+                        table,
+                        attempt + 1,
+                        exc,
+                    )
+                    time.sleep(3**attempt)  # Backoff mais agressivo
+                    continue
+
+                if response.ok:
+                    break
+                if response.status_code not in TRANSIENT_SUPABASE_STATUS_CODES:
+                    raise RuntimeError(
+                        f"Supabase rejeitou gravação em {table} "
+                        f"(HTTP {response.status_code}): {response.text[:500]}"
+                    )
+                if attempt == 5:
+                    raise RuntimeError(
+                        f"Supabase continuou indisponível para gravação em {table} "
+                        f"após 6 tentativas (HTTP {response.status_code}): "
+                        f"{response.text[:500]}"
+                    )
+                logging.getLogger("wedrop.scraper").warning(
+                    "Supabase respondeu HTTP %s ao gravar em %s "
+                    "(tentativa %s/6); repetindo.",
+                    response.status_code,
+                    table,
+                    attempt + 1,
                 )
+                time.sleep(3**attempt)  # Backoff mais agressivo
 
     def validate(self) -> None:
         """Fail before a long scrape if the configured Supabase schema is unavailable."""
