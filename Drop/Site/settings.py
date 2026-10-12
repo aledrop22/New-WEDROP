@@ -18,10 +18,10 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
-# Concorrência (REDUZIDO PARA ESTABILIDADE)
-CONCURRENT_REQUESTS_PER_DOMAIN = 1  # Reduzido para evitar sobrecarga do browser
-CONCURRENT_REQUESTS = 2  # Reduzido para evitar crash
-DOWNLOAD_DELAY = 1.5  # Aumentado para dar tempo ao browser
+# Concorrência (OTIMIZADO PARA VELOCIDADE)
+CONCURRENT_REQUESTS_PER_DOMAIN = 16  # Aumentado para mais velocidade
+CONCURRENT_REQUESTS = 16  # Aumentado para mais velocidade
+DOWNLOAD_DELAY = 0.1  # Reduzido para mais velocidade
 
 # Timeouts
 DOWNLOAD_TIMEOUT = 120  # Aumentado de 60 para 120 segundos
@@ -72,4 +72,23 @@ PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 60_000  # 60s
 
 # Limitar contexts/páginas para reduzir memória
 PLAYWRIGHT_MAX_CONTEXTS = 2  # Reduzido de 4 para 2
-PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 2  # Reduzido de 4 para 2
+PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 3  # Reduzido de 4 para 2
+
+# Função para bloquear recursos desnecessários (Imagens, CSS, Fontes)
+def should_abort_request(request):
+    return request.resource_type in (
+        "image",
+        "media",
+        "font",
+        "stylesheet"
+    )
+
+# Diz ao Playwright para usar a função acima
+PLAYWRIGHT_ABORT_REQUEST = should_abort_request
+
+LOG_FILE = "log_do_scrapy.txt"
+
+# LOGGING CONFIG
+LOG_LEVEL = "INFO"
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
+LOG_DATEFORMAT = "%Y-%m-%d %H:%M:%S"

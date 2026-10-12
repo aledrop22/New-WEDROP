@@ -565,7 +565,7 @@ class WedropMonitor:
                 # Tentar múltiplas fontes para o nome do produto - seletores específicos primeiro
                 name = ""
 
-                # Seletores específicos do WeDrop
+                # Seletores específicos do WeDrop (prioridade máxima)
                 specific_selectors = [
                     'h2.chakra-heading.css-18puvtl',
                     'h1.chakra-heading',
@@ -636,8 +636,13 @@ class WedropMonitor:
                 raise
         sku_match = re.search(r"SKU:\s*([^|]+)", sku_ean_text, re.IGNORECASE)
         ean_match = re.search(r"EAN:\s*([^|]+)", sku_ean_text, re.IGNORECASE)
-        price_node = page.locator('p[class*="1enygfq"], p[class*="1hulv5q"]').first
+
+        # Preço - seletor específico
+        price_node = page.locator('p.chakra-text.css-1enygfq').first
         price = (await price_node.inner_text()).strip() if await price_node.count() else ""
+        if not price:
+            price_node = page.locator('p[class*="1enygfq"], p[class*="1hulv5q"]').first
+            price = (await price_node.inner_text()).strip() if await price_node.count() else ""
 
         # Tentar extrair preço de outros seletores se o principal falhar
         if not price:
@@ -655,12 +660,20 @@ class WedropMonitor:
                         price = alt_price
                         break
 
-        availability_node = page.locator('span[class*="1dvt0g7"]').first
+        # Disponibilidade/Ativo - seletor específico
+        availability_node = page.locator('span.chakra-badge.css-1dvt0g7').first
         availability = (
             (await availability_node.inner_text()).strip()
             if await availability_node.count()
             else ""
         )
+        if not availability:
+            availability_node = page.locator('span[class*="1dvt0g7"]').first
+            availability = (
+                (await availability_node.inner_text()).strip()
+                if await availability_node.count()
+                else ""
+            )
         description_panel = page.get_by_role("tabpanel").first
         description = (
             (await description_panel.inner_text()).strip()
@@ -682,13 +695,12 @@ class WedropMonitor:
             await page.wait_for_timeout(400)
 
         history = []
-        history_rows = page.locator(
-            "div.css-2p27im, [data-testid*='history-row'], [class*='historyRow']"
-        )
+        # Seletores específicos para histórico de estoque
+        history_rows = page.locator('div.css-2p27im')
         for row in await history_rows.all():
-            type_node = row.locator('span[class*="1kghjv8"]').first
-            quantity_node = row.locator('p[class*="1yd6l9q"]').first
-            date_node = row.locator('p[class*="1dv5bo2"]').first
+            type_node = row.locator('span.chakra-badge.css-4yapew, span.chakra-badge.css-1kghjv8').first
+            quantity_node = row.locator('p.chakra-text.css-1yd6l9q').first
+            date_node = row.locator('p.chakra-text.css-1dv5bo2').first
             movement_type = (
                 (await type_node.inner_text()).strip() if await type_node.count() else ""
             )
@@ -914,28 +926,43 @@ class WedropMonitor:
                                 page, product_id, product_url, category["name"]
                             )
                             products.append(product)
+                            # Validar campos obrigatórios
+                            missing_fields = []
+                            if not product.get("name") or len(product.get("name", "")) < 3:
+                                missing_fields.append("nome")
+                            if not product.get("price"):
+                                missing_fields.append("preço")
+                            if not product.get("availability"):
+                                missing_fields.append("disponibilidade")
+
+                            if missing_fields:
+                                log_progress(
+                                    f"⚠️ Campos obrigatórios vazios: {', '.join(missing_fields)} "
+                                    f"(ID {product_id})"
+                                )
+
                             log_progress(
                                 f"Produto lido: {product.get('name') or 'nome indisponível'}; "
                                 f"histórico: {len(product.get('stock_history', []))} "
                                 "movimentações."
                             )
-                            if len(products) == 50:
-                                log_progress("Salvando lote de 50 produtos no SQLite.")
+                            if len(products) == 10:  # Salvar a cada 10 produtos
+                                log_progress("Salvando lote de 10 produtos no SQLite.")
                                 self.repository.save_products(products, captured_at)
                                 log_progress(
-                                    "Lote de 50 produtos salvo no SQLite, incluindo "
+                                    "Lote de 10 produtos salvo no SQLite, incluindo "
                                     "históricos de estoque."
                                 )
                                 json_writer.append_batch(products, captured_at)
-                                log_progress("Lote de 50 produtos gravado em data.json.")
+                                log_progress("Lote de 10 produtos gravado em data.json.")
                                 if supabase is not None:
                                     log_progress(
-                                        "Enviando lote de 50 produtos e históricos "
+                                        "Enviando lote de 10 produtos e históricos "
                                         "para o Supabase."
                                     )
                                     supabase.save_products(products, captured_at)
                                     log_progress(
-                                        "Lote de 50 produtos e históricos confirmado "
+                                        "Lote de 10 produtos e históricos confirmado "
                                         "no Supabase."
                                     )
                                 total_products += len(products)
