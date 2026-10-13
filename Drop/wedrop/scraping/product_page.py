@@ -77,8 +77,14 @@ _HISTORY_TYPE_SELECTOR = "span.chakra-badge.css-4yapew, span.chakra-badge.css-1k
 _INITIAL_SNAPSHOT_JS = """(sel) => {
   const text = (el) => (el ? el.innerText.trim() : "");
   const firstText = (selector) => text(document.querySelector(selector));
+  // O selo de disponibilidade muda de classe conforme a página; o texto não muda.
+  const plain = (value) => value.normalize("NFD").replace(/\\p{M}/gu, "").trim().toLowerCase();
+  const availabilityBadge = Array.from(document.querySelectorAll("span.chakra-badge"))
+    .map((badge) => badge.innerText.trim())
+    .find((text) => ["disponivel", "indisponivel"].includes(plain(text))) || "";
   return {
     hasPasswordInput: document.querySelector('input[type="password"]') !== null,
+    availabilityBadge: availabilityBadge,
     title: document.title,
     bodyText: document.body.innerText,
     nameCandidates: sel.names.map(firstText),
@@ -185,7 +191,7 @@ class ProductReader:
             sku_ean_text=initial["skuEanText"],
             price_candidates=tuple(initial["priceCandidates"]),
             alt_price_candidates=tuple(initial["altPriceCandidates"]),
-            availability_candidates=tuple(initial["availabilityCandidates"]),
+            availability_candidates=(initial["availabilityBadge"], *initial["availabilityCandidates"]),
             description=initial["description"],
             spec_rows=tuple((label, value) for label, value in details["specRows"]),
             stock_candidates=tuple(details["stockCandidates"]),
