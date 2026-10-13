@@ -12,10 +12,12 @@ import unicodedata
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
-from sales_reporting import SalesRepository, load_local_environment
-from wedrop_monitor_sistema import DB_FILE, WedropMonitor
+from wedrop.config import DATABASE_FILE, load_environment
+from wedrop.mapping import MappingOptions, run_mapping
+from wedrop.storage.sqlite_repository import SalesRepository
+from wedrop.storage.supabase_repository import SupabaseRepository, is_configured
 
-load_local_environment()
+load_environment()
 
 st.set_page_config(
     page_title="Monitoramento WeDrop",
@@ -61,6 +63,32 @@ def _load_streamlit_secrets() -> None:
 _load_streamlit_secrets()
 
 
+SNAPSHOT_TTL_SECONDS = 300
+
+
+@st.cache_data(ttl=SNAPSHOT_TTL_SECONDS, show_spinner="Carregando dados do Supabase...")
+def _supabase_snapshot() -> dict[str, list[dict[str, Any]]]:
+    supabase = SupabaseRepository.from_environment()
+    try:
+        return supabase.fetch_snapshot()
+    finally:
+        supabase.close()
+
+
+def _open_repository() -> SalesRepository:
+    """Fonte dos dados: o Supabase quando não há banco local (ex.: nuvem) ou quando forçado.
+
+    WEDROP_FONTE_PAINEL=supabase força o Supabase; =local força o banco local.
+    """
+    forced = os.environ.get("WEDROP_FONTE_PAINEL", "").strip().lower()
+    use_supabase = forced == "supabase" or (
+        forced != "local" and not DATABASE_FILE.exists() and is_configured()
+    )
+    if use_supabase:
+        return SalesRepository.from_snapshot(_supabase_snapshot())
+    return SalesRepository(DATABASE_FILE)
+
+
 def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
     """Convert query rows into a small chart-compatible mapping."""
     return {
@@ -70,15 +98,17 @@ def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
 
 
 def _run_catalog_sync() -> None:
-    monitor = WedropMonitor()
     try:
         with st.spinner("Atualizando categorias, vendas e reposições..."):
-            asyncio.run(
-                monitor.run_full_mapping(
-                    prompt_for_credentials=False,
-                )
+            summary = asyncio.run(run_mapping(MappingOptions(ask_for_credentials=False)))
+        st.cache_data.clear()
+        if summary.is_complete:
+            st.success("Catálogo atualizado e sincronizado.")
+        else:
+            st.warning(
+                "Coleta incompleta: execute novamente para retomar de onde parou "
+                f"({summary.saved_total} de {summary.site_total} produtos salvos)."
             )
-        st.success("Catálogo atualizado e sincronizado.")
     except Exception as exc:
         logging.getLogger("wedrop.scraper").exception(
             "Falha ao atualizar catálogo pelo Streamlit."
@@ -93,8 +123,6 @@ def _run_catalog_sync() -> None:
             )
         else:
             st.error(f"Falha na coleta: {message}")
-    finally:
-        monitor.close()
 
 
 def _status_bucket(value: str | None) -> str:
@@ -139,7 +167,7 @@ def main() -> None:
         if st.button("Atualizar catálogo e históricos", type="primary"):
             _run_catalog_sync()
 
-    repository = SalesRepository(DB_FILE)
+    repository = _open_repository()
     try:
         stored_categories = repository.category_activity(start_day, end_day)
         activity_by_name = {row["name"]: row for row in stored_categories}

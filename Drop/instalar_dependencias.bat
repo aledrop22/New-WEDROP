@@ -62,8 +62,7 @@ echo.
 
 python -c "import streamlit; print('✅ Streamlit OK')" 2>nul || echo "❌ Streamlit não funcionou"
 python -c "import playwright; print('✅ Playwright OK')" 2>nul || echo "❌ Playwright não funcionou"
-python -c "import pandas; print('✅ Pandas OK')" 2>nul || echo "❌ Pandas não funcionou"
-python -c "import scrapy; print('✅ Scrapy OK')" 2>nul || echo "❌ Scrapy não funcionou"
+
 
 echo.
 echo ================================================================
@@ -71,8 +70,8 @@ echo ✅ INSTALAÇÃO CONCLUÍDA!
 echo ================================================================
 echo.
 echo Próximos passos:
-echo 1. Execute validacao: python validar_config_streamlit.py
-echo 2. Configure autenticacao: python obter_cookie_novo_site.py
-echo 3. Inicie o app: python start_streamlit.py
+echo 1. Coleta manual: coletar.bat
+echo 2. Credenciais: preencha o arquivo .env (veja .env.example)
+echo 3. Painel de vendas: painel.bat
 echo.
 pause

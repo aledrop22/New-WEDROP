@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
@@ -28,6 +29,9 @@ from sales_reporting import (
 
 BASE_URL = "https://dash.wedrop.com.br"
 PRODUCTS_PER_PAGE = 100
+# Quantas vezes repetir a leitura da listagem quando o site informa mais
+# produtos do que os links encontrados.
+LISTING_RETRIES = 2
 PROJECT_DIR = Path(__file__).resolve().parent
 STORAGE_STATE_FILE = PROJECT_DIR / "storage_state.json"
 DB_FILE = PROJECT_DIR / "wedrop_monitoramento.db"
@@ -208,6 +212,99 @@ def calculate_current_balance(stock_history: list[dict]) -> int:
     return balance
 
 
+def load_collected_product_ids(json_path: Path) -> set[str]:
+    """Carrega os IDs de produtos já gravados em data.json (JSON Lines)."""
+    collected_ids: set[str] = set()
+    if not json_path.is_file():
+        return collected_ids
+    with json_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            product_id = record.get("product_id")
+            if product_id:
+                collected_ids.add(str(product_id))
+    return collected_ids
+
+
+def backup_data_file(json_path: Path) -> Path | None:
+    """Cria uma cópia de segurança do data.json antes de iniciar a coleta.
+
+    Retorna o caminho do backup criado, ou None se não havia arquivo para
+    copiar. O backup é nomeado com timestamp e fica na mesma pasta.
+    """
+    if not json_path.is_file():
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = json_path.with_name(f"data_backup_{timestamp}.json")
+    shutil.copy2(json_path, backup_path)
+    log_progress(f"Backup de segurança criado: {backup_path.name}")
+    return backup_path
+
+
+def restore_missing_from_backups(
+    json_path: Path, exclude: set[Path] | None = None, backup_limit: int = 5
+) -> int:
+    """Acrescenta ao data.json os produtos que só existem nos backups recentes.
+
+    Nunca reescreve nem remove registros: apenas anexa product_id ausentes,
+    começando pelo backup mais recente. Assim, se o data.json foi truncado,
+    a retomada não repete produtos que já estão salvos em um backup.
+    Retorna a quantidade de registros restaurados.
+    """
+    exclude = exclude or set()
+    collected = load_collected_product_ids(json_path)
+    candidates = [
+        path
+        for path in sorted(
+            json_path.parent.glob("data_backup*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if path != json_path and path not in exclude
+    ][:backup_limit]
+
+    new_lines: list[str] = []
+    for backup in candidates:
+        with backup.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    record = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                product_id = str(record.get("product_id") or "")
+                if product_id and product_id not in collected:
+                    collected.add(product_id)
+                    new_lines.append(stripped)
+
+    if not new_lines:
+        return 0
+    needs_newline = (
+        json_path.is_file()
+        and json_path.stat().st_size > 0
+        and not json_path.read_bytes().endswith(b"\n")
+    )
+    with json_path.open("a", encoding="utf-8", newline="\n") as output:
+        if needs_newline:
+            output.write("\n")
+        output.write("\n".join(new_lines) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
+    log_progress(
+        f"{len(new_lines)} produtos restaurados de backups recentes para "
+        "data.json (registros existentes não foram alterados)."
+    )
+    return len(new_lines)
+
+
 def _credential_values(
     email: str | None,
     password: str | None,
@@ -245,8 +342,13 @@ class WedropMonitor:
     ) -> None:
         await page.goto(f"{BASE_URL}/catalog", wait_until="domcontentloaded")
         await page.wait_for_timeout(1000)
-        login_form = page.locator('input[type="password"]')
-        if "/login" not in page.url and not await login_form.count():
+        # Verifica se já está autenticado (não está na página de login e não
+        # há campo de senha). Usa try/except pois a página pode navegar/redirecionar.
+        try:
+            has_login_field = await page.locator('input[type="password"]').count() > 0
+        except Exception:
+            has_login_field = False
+        if "/login" not in page.url and not has_login_field:
             return
 
         login_email, login_password = _credential_values(
@@ -490,7 +592,10 @@ class WedropMonitor:
             pagination_state = await self._pagination_state(page)
             if pagination_state is not None:
                 current_page, total_pages = pagination_state
-                log_progress(f"Listagem: página {current_page} de {total_pages}.")
+                log_progress(
+                    f"Listagem: página {current_page} de {total_pages}; "
+                    f"{len(products)} produtos acumulados."
+                )
                 if current_page >= total_pages:
                     break
 
@@ -565,29 +670,43 @@ class WedropMonitor:
                         "Continuando com os produtos encontrados."
                     )
                 break
-            previous_url = page.url
-            previous_page = (
-                pagination_state[0] if pagination_state is not None else None
-            )
-            await next_button.click()
+            if pagination_state is None:
+                raise RuntimeError(
+                    f"Não foi possível ler a página atual da categoria "
+                    f"{category['name']}."
+                )
+            previous_page = pagination_state[0]
+            target_page = previous_page + 1
+            previous_links = set(await self._product_links_on_page(page))
+            # Vai para a página seguinte pelo número; se não houver, usa ">".
+            numbered_button = page.get_by_role(
+                "button", name=str(target_page), exact=True
+            ).first
+            if await numbered_button.count() and await numbered_button.is_enabled():
+                await numbered_button.click()
+            else:
+                await next_button.click()
             changed = False
-            for _ in range(20):
+            for _ in range(40):
                 await page.wait_for_timeout(250)
                 new_state = await self._pagination_state(page)
+                if new_state is None:
+                    continue
+                if new_state[0] > target_page:
+                    raise RuntimeError(
+                        f"A paginação da categoria {category['name']} pulou da "
+                        f"página {previous_page} para {new_state[0]}."
+                    )
                 if (
-                    previous_page is not None
-                    and new_state is not None
-                    and new_state[0] > previous_page
+                    new_state[0] == target_page
+                    and set(await self._product_links_on_page(page)) != previous_links
                 ):
-                    changed = True
-                    break
-                if page.url != previous_url:
                     changed = True
                     break
             if not changed:
                 raise RuntimeError(
-                    f"Não foi possível confirmar a mudança de página na categoria "
-                    f"{category['name']}."
+                    f"Não foi possível confirmar a página {target_page} da "
+                    f"categoria {category['name']}."
                 )
         else:
             raise RuntimeError(
@@ -603,7 +722,17 @@ class WedropMonitor:
         for attempt in range(max_retries):
             try:
                 await page.goto(product_url, wait_until="domcontentloaded")
-                await page.wait_for_timeout(500)
+                # Aguardar conteúdo da página carregar (nome ou preço aparecem)
+                try:
+                    await page.wait_for_selector(
+                        "h2.chakra-heading, p.chakra-text.css-1enygfq, "
+                        "p[class*='1enygfq'], p[class*='1hulv5q']",
+                        state="visible",
+                        timeout=8000,
+                    )
+                except Exception:
+                    # Fallback: esperar um pouco mais para a página renderizar
+                    await page.wait_for_timeout(1500)
                 if await page.locator('input[type="password"]').count():
                     raise RuntimeError(
                         "A sessão WeDrop expirou durante a coleta. Execute novamente para "
@@ -699,6 +828,10 @@ class WedropMonitor:
                 'span[class*="price"]',
                 'div[class*="price"]',
                 '[data-testid*="price"]',
+                # Seletor baseado na estrutura informada pelo usuário
+                'div.css-c30f99 p.chakra-text',
+                'div.css-0 p.chakra-text',
+                'div[class*="css-0"] p[class*="chakra-text"]',
             ]
             for selector in alternative_price_selectors:
                 alt_price_node = page.locator(selector).first
@@ -707,6 +840,13 @@ class WedropMonitor:
                     if re.search(r'R\$\s*[\d.,]+', alt_price):
                         price = alt_price
                         break
+
+        # Último recurso: procurar por "R$" no texto completo da página
+        if not price:
+            price_matches = re.findall(r'R\$\s*[\d]{1,3}(?:\.[\d]{3})*(?:,[\d]{2})?', page_text)
+            if price_matches:
+                # Pega o primeiro valor monetário encontrado (normalmente é o preço)
+                price = price_matches[0].strip()
 
         # Disponibilidade/Ativo - seletor específico
         availability_node = page.locator('span.chakra-badge.css-1dvt0g7').first
@@ -899,7 +1039,14 @@ class WedropMonitor:
             log_progress("Modo local: Supabase não será atualizado.")
         async with async_playwright() as playwright:
             log_progress("Iniciando navegador Chromium.")
-            browser = await playwright.chromium.launch(headless=True)
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-logging",
+                    "--log-level=0",
+                    "--disable-dev-shm-usage",
+                ],
+            )
             try:
                 if STORAGE_STATE_FILE.is_file():
                     context = await browser.new_context(
@@ -917,13 +1064,30 @@ class WedropMonitor:
                         await self.get_categories(page), category_filter
                     )
                     log_progress(f"Categorias selecionadas: {len(categories)}.")
+
+                    # Backup do data.json ANTES de qualquer alteração
+                    current_backup = backup_data_file(JSON_DATA_FILE)
+
                     total_products = 0
                     json_writer = ProductJSONLWriter(JSON_DATA_FILE)
-                    json_writer.start()
-                    log_progress(
-                        "data.json limpo para esta execução; histórico SQLite e "
-                        "registros anteriores do Supabase serão preservados."
+                    restore_missing_from_backups(
+                        JSON_DATA_FILE,
+                        exclude={current_backup} if current_backup else None,
                     )
+                    collected_ids = load_collected_product_ids(JSON_DATA_FILE)
+                    if collected_ids:
+                        log_progress(
+                            f"data.json preservado com {len(collected_ids)} produtos "
+                            "já coletados. A coleta vai continuar de onde parou, "
+                            "ignorando os produtos já registrados."
+                        )
+                    else:
+                        json_writer.start()
+                        log_progress(
+                            "data.json vazio; iniciando coleta completa. "
+                            "histórico SQLite e registros anteriores do Supabase "
+                            "serão preservados."
+                        )
                     remaining_limit = product_limit
 
                     for category_index, category in enumerate(categories, 1):
@@ -934,8 +1098,29 @@ class WedropMonitor:
                         product_links = await self.get_products_from_category(
                             page, category
                         )
-                        discovered_product_count = len(product_links)
                         expected_count = category.get("count")
+                        # O site é a referência: se faltaram links, repete a leitura
+                        # da listagem e junta o que foi encontrado nas tentativas.
+                        for retry in range(1, LISTING_RETRIES + 1):
+                            if expected_count is None or len(product_links) >= expected_count:
+                                break
+                            log_progress(
+                                f"  Listagem divergente: {len(product_links)} de "
+                                f"{expected_count} produtos; repetindo a leitura "
+                                f"({retry}/{LISTING_RETRIES})."
+                            )
+                            try:
+                                retried_links = await self.get_products_from_category(
+                                    page, category
+                                )
+                            except RuntimeError as exc:
+                                log_progress(
+                                    f"  Nova leitura falhou ({exc}); mantendo "
+                                    f"{len(product_links)} links já encontrados."
+                                )
+                                break
+                            product_links = {**product_links, **retried_links}
+                        discovered_product_count = len(product_links)
                         log_progress(
                             f"Listagem lida: {discovered_product_count} produtos "
                             f"encontrados"
@@ -945,6 +1130,25 @@ class WedropMonitor:
                                 else "."
                             )
                         )
+                        if collected_ids:
+                            before = len(product_links)
+                            product_links = {
+                                pid: url
+                                for pid, url in product_links.items()
+                                if pid not in collected_ids
+                            }
+                            skipped = before - len(product_links)
+                            if skipped:
+                                log_progress(
+                                    f"  {skipped} produtos já coletados nesta "
+                                    f"categoria; restam {len(product_links)}."
+                                )
+                            if not product_links:
+                                log_progress(
+                                    f"  Categoria {category['name']} já completa; "
+                                    "pulando."
+                                )
+                                continue
                         if remaining_limit is not None:
                             product_links = dict(
                                 list(product_links.items())[:remaining_limit]
@@ -970,84 +1174,99 @@ class WedropMonitor:
                                 f"{category['name']}."
                             )
                         products = []
-                        for product_index, (product_id, product_url) in enumerate(
-                            product_links.items(), 1
-                        ):
-                            log_progress(
-                                f"Lendo produto {product_index}/{len(product_links)} "
-                                f"(ID {product_id})."
-                            )
-                            product = await self.get_product_details_and_history(
-                                page, product_id, product_url, category["name"]
-                            )
-                            products.append(product)
-                            # Validar campos obrigatórios
-                            missing_fields = []
-                            if not product.get("name") or len(product.get("name", "")) < 3:
-                                missing_fields.append("nome")
-                            if not product.get("price"):
-                                missing_fields.append("preço")
-                            if not product.get("availability"):
-                                missing_fields.append("disponibilidade")
 
-                            if missing_fields:
-                                log_progress(
-                                    f"⚠️ Campos obrigatórios vazios: {', '.join(missing_fields)} "
-                                    f"(ID {product_id})"
-                                )
-
+                        def _flush_batch(batch: list[dict]) -> None:
+                            """Grava o lote atual no SQLite, JSON e Supabase."""
+                            nonlocal total_products
+                            if not batch:
+                                return
+                            label = f"lote de {len(batch)} produtos"
+                            log_progress(f"Salvando {label} no SQLite.")
+                            self.repository.save_products(batch, captured_at)
                             log_progress(
-                                f"Produto lido: {product.get('name') or 'nome indisponível'}; "
-                                f"histórico: {len(product.get('stock_history', []))} "
-                                "movimentações."
+                                f"{label.capitalize()} salvo no SQLite, "
+                                "incluindo históricos de estoque."
                             )
-                            if len(products) == 10:  # Salvar a cada 10 produtos
-                                log_progress("Salvando lote de 10 produtos no SQLite.")
-                                self.repository.save_products(products, captured_at)
-                                log_progress(
-                                    "Lote de 10 produtos salvo no SQLite, incluindo "
-                                    "históricos de estoque."
-                                )
-                                json_writer.append_batch(products, captured_at)
-                                log_progress("Lote de 10 produtos gravado em data.json.")
-                                if supabase is not None:
-                                    log_progress(
-                                        "Enviando lote de 10 produtos e históricos "
-                                        "para o Supabase."
-                                    )
-                                    supabase.save_products(products, captured_at)
-                                    log_progress(
-                                        "Lote de 10 produtos e históricos confirmado "
-                                        "no Supabase."
-                                    )
-                                total_products += len(products)
-                                products = []
-                        if products:
-                            log_progress(
-                                f"Salvando lote final de {len(products)} produtos "
-                                "no SQLite."
-                            )
-                            self.repository.save_products(products, captured_at)
-                            log_progress(
-                                f"Lote final de {len(products)} produtos salvo no "
-                                "SQLite, incluindo históricos de estoque."
-                            )
-                            json_writer.append_batch(products, captured_at)
-                            log_progress(
-                                f"Lote final de {len(products)} produtos gravado "
-                                "em data.json."
-                            )
+                            json_writer.append_batch(batch, captured_at)
+                            log_progress(f"{label.capitalize()} gravado em data.json.")
                             if supabase is not None:
                                 log_progress(
-                                    f"Enviando lote final de {len(products)} produtos "
-                                    "e históricos para o Supabase."
+                                    f"Enviando {label} e históricos para o Supabase."
                                 )
-                                supabase.save_products(products, captured_at)
+                                supabase.save_products(batch, captured_at)
                                 log_progress(
-                                    f"Lote final de {len(products)} produtos e "
-                                    "históricos confirmado no Supabase."
+                                    f"{label.capitalize()} e históricos confirmado "
+                                    "no Supabase."
                                 )
-                            total_products += len(products)
+                            total_products += len(batch)
+
+                        try:
+                            for product_index, (product_id, product_url) in enumerate(
+                                product_links.items(), 1
+                            ):
+                                # Pular produtos já coletados (retomada de onde parou)
+                                if product_id in collected_ids:
+                                    continue
+                                log_progress(
+                                    f"Lendo produto {product_index}/{len(product_links)} "
+                                    f"(ID {product_id})."
+                                )
+                                try:
+                                    product = await self.get_product_details_and_history(
+                                        page, product_id, product_url, category["name"]
+                                    )
+                                except RuntimeError as exc:
+                                    if "sessão wedrop expirou" not in str(
+                                        exc
+                                    ).casefold() and "sessao wedrop expirou" not in str(
+                                        exc
+                                    ).casefold():
+                                        raise
+                                    log_progress(
+                                        f"  Sessão expirou no produto {product_id}; "
+                                        "salvando progresso e reautenticando..."
+                                    )
+                                    _flush_batch(products)
+                                    products = []
+                                    await self.ensure_authenticated(
+                                        page,
+                                        context,
+                                        email,
+                                        password,
+                                        prompt_for_credentials,
+                                    )
+                                    log_progress("  Sessão reestabelecida; retomando coleta.")
+                                    product = await self.get_product_details_and_history(
+                                        page, product_id, product_url, category["name"]
+                                    )
+                                products.append(product)
+                                # Validar campos obrigatórios
+                                missing_fields = []
+                                if not product.get("name") or len(product.get("name", "")) < 3:
+                                    missing_fields.append("nome")
+                                if not product.get("price"):
+                                    missing_fields.append("preço")
+                                if not product.get("availability"):
+                                    missing_fields.append("disponibilidade")
+
+                                if missing_fields:
+                                    log_progress(
+                                        f"⚠️ Campos obrigatórios vazios: {', '.join(missing_fields)} "
+                                        f"(ID {product_id})"
+                                    )
+
+                                log_progress(
+                                    f"Produto lido: {product.get('name') or 'nome indisponível'}; "
+                                    f"histórico: {len(product.get('stock_history', []))} "
+                                    "movimentações."
+                                )
+                                if len(products) == 10:  # Salvar a cada 10 produtos
+                                    _flush_batch(products)
+                                    products = []
+                        finally:
+                            if products:
+                                _flush_batch(products)
+                                products = []
                         if (
                             category["count"] is not None
                             and discovered_product_count < category["count"]
@@ -1068,6 +1287,14 @@ class WedropMonitor:
                         f"Mapeamento concluído {destination}: {len(categories)} "
                         f"categorias, {total_products} produtos."
                     )
+                    if category_filter is None and product_limit is None:
+                        site_total = sum(c["count"] or 0 for c in categories)
+                        saved_total = len(load_collected_product_ids(JSON_DATA_FILE))
+                        log_progress(
+                            f"Comparação com o site: somatório das categorias "
+                            f"{site_total}; data.json com {saved_total} produtos "
+                            f"(diferença {max(site_total - saved_total, 0)})."
+                        )
                     log_progress(f"Destino histórico local: {DB_FILE}")
                     log_progress(f"Catálogo JSON Lines: {JSON_DATA_FILE}")
                     if supabase is not None:

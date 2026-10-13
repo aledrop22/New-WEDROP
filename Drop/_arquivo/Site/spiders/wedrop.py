@@ -115,7 +115,7 @@ class WedropSpider(scrapy.Spider):
                     await page.wait_for_selector("div.tag-vendas-produto", timeout=2000)
                 except:
                     pass
-                await page.wait_for_timeout(1000)
+        
             except Exception as e:
                 self.log(f"❌ Timeout: {e}", level=logging.ERROR)
                 try:
@@ -299,20 +299,6 @@ class WedropSpider(scrapy.Spider):
                 pass
             return
 
-        tags_list = []
-        try:
-            tag_locators = page.locator('span.tagged_as span.detail-content a')
-            await tag_locators.first.wait_for(timeout=2000)
-
-            for tag in await tag_locators.all():
-                tag_text = await tag.text_content()
-                if tag_text:
-                    tags_list.append(tag_text.strip().lower())
-
-        except Exception:
-            self.log(f"AVISO: Nenhuma tag encontrada (ou timeout) em {response.url}.")
-            pass
-
         try:
             page_content = await asyncio.wait_for(page.content(), timeout=10.0)
         except asyncio.TimeoutError:
@@ -342,6 +328,11 @@ class WedropSpider(scrapy.Spider):
             pass
 
         selector = Selector(text=page_content)
+        tags_list = []
+        tags_nodes = selector.css('span.tagged_as span.detail-content a::text').getall()
+        for t in tags_nodes:
+            if clean_text(t):
+                tags_list.append(clean_text(t).lower())
         loader = ItemLoader(item=ProductItem(), selector=selector)
 
         loader.add_value('item_number', None)

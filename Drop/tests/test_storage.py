@@ -1,4 +1,5 @@
-import asyncio
+"""Persistência: SQLite do dashboard, Supabase e movimentações de estoque."""
+
 import json
 import sqlite3
 import tempfile
@@ -9,153 +10,16 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import requests
 
-from sales_reporting import (
-    SalesRepository,
-    SupabaseRepository,
+from wedrop.storage.sqlite_repository import SalesRepository
+from wedrop.storage.stock_events import (
     classify_movement,
     parse_event_datetime,
     parse_quantity,
 )
-from wedrop_monitor_sistema import (
-    ProductJSONLWriter,
-    WedropMonitor,
-    _sales_count,
-    product_id_from_url,
-    value_for_label,
-)
+from wedrop.storage.supabase_repository import SupabaseRepository
 
 
-class SalesReportingTests(unittest.TestCase):
-    def test_pagination_state_parses_current_and_last_page(self):
-        self.assertEqual(
-            WedropMonitor._parse_pagination_state("Página 1 de 2"), (1, 2)
-        )
-        self.assertEqual(
-            WedropMonitor._parse_pagination_state("Página 5 de 5"), (5, 5)
-        )
-        self.assertIsNone(WedropMonitor._parse_pagination_state("Página 3 de 2"))
-        self.assertIsNone(WedropMonitor._parse_pagination_state("Sem paginação"))
-
-    def test_pagination_fallback_calculates_next_page_from_url(self):
-        target = WedropMonitor._next_page_state(
-            "https://dash.wedrop.com.br/catalog/cozinha"
-            "?limit=100&offset=300&page=4&search=panela",
-            1276,
-        )
-        self.assertIsNotNone(target)
-        if target is not None:
-            self.assertEqual(target, (5, 13))
-        self.assertIsNone(
-            WedropMonitor._next_page_state(
-                "https://dash.wedrop.com.br/catalog/cozinha"
-                "?limit=100&offset=1200&page=13",
-                1276,
-            )
-        )
-        self.assertIsNone(
-            WedropMonitor._next_page_state(
-                "https://dash.wedrop.com.br/catalog/cozinha", 1276
-            )
-        )
-
-    def test_product_details_allow_missing_optional_technical_fields(self):
-        async def extract_product():
-            empty_locator = Mock()
-            empty_locator.first = empty_locator
-            empty_locator.count = AsyncMock(return_value=0)
-            empty_locator.all = AsyncMock(return_value=[])
-            empty_locator.inner_text = AsyncMock(return_value="Produto teste")
-            description_panel = Mock()
-            description_panel.first = description_panel
-            description_panel.count = AsyncMock(return_value=1)
-            description_panel.inner_text = AsyncMock(
-                return_value="Descrição completa do produto"
-            )
-            page = Mock()
-            page.goto = AsyncMock()
-            page.wait_for_timeout = AsyncMock()
-            page.locator = Mock(return_value=empty_locator)
-            page.get_by_role = Mock(
-                side_effect=[description_panel, empty_locator]
-            )
-            page.title = AsyncMock(return_value="Produto teste")
-
-            monitor = WedropMonitor()
-            try:
-                return await monitor.get_product_details_and_history(
-                    page,
-                    "123",
-                    "https://dash.wedrop.com.br/catalog/123",
-                    "Categoria teste",
-                )
-            finally:
-                monitor.close()
-
-        product = asyncio.run(extract_product())
-        self.assertEqual(product["sku"], "")
-        self.assertEqual(product["ean"], "")
-        self.assertEqual(product["ncm"], "")
-        self.assertEqual(product["description"], "Descrição completa do produto")
-
-    def test_product_jsonl_writer_saves_incremental_batches(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "data.json"
-            writer = ProductJSONLWriter(output_path)
-            writer.start()
-            writer.append_batch(
-                [
-                    {
-                        "product_id": "123",
-                        "name": "Produto teste",
-                        "number_sales": "7",
-                        "height": "10 cm",
-                        "stock_history": [{"type": "Venda", "quantity": "- 1"}],
-                    }
-                ],
-                "2026-10-10T12:00:00-03:00",
-            )
-            writer.append_batch(
-                [{"product_id": "456", "name": "Segundo produto"}],
-                "2026-10-10T12:01:00-03:00",
-            )
-
-            records = [
-                json.loads(line)
-                for line in output_path.read_text(encoding="utf-8").splitlines()
-            ]
-            self.assertEqual([record["product_id"] for record in records], ["123", "456"])
-            self.assertEqual(records[0]["title"], "Produto teste")
-            self.assertEqual(records[0]["numero_vendas"], "7")
-            self.assertEqual(records[0]["altura"], "10 cm")
-            self.assertEqual(records[0]["scrape_time"], "2026-10-10T12:00:00-03:00")
-            self.assertEqual(records[0]["stock_history"][0]["type"], "Venda")
-
-    def test_category_filter_matches_case_insensitive_substrings(self):
-        categories = [
-            {"name": "Beleza"},
-            {"name": "Beleza e Cuidados"},
-            {"name": "Cozinha"},
-        ]
-        monitor = WedropMonitor()
-        self.addCleanup(monitor.close)
-        matches = monitor._filter_categories(categories, "bElEzA")
-        self.assertEqual(
-            [category["name"] for category in matches],
-            ["Beleza"],
-        )
-        self.assertEqual(
-            [category["name"] for category in monitor._filter_categories(categories, "beleza e")],
-            ["Beleza e Cuidados"],
-        )
-        with self.assertRaisesRegex(RuntimeError, "Categorias disponíveis"):
-            monitor._filter_categories(categories, "inexistente")
-
-    def test_sales_count_rejects_non_numeric_label_values(self):
-        self.assertEqual(_sales_count("12"), "12")
-        self.assertEqual(_sales_count(" 1.200 "), "1200")
-        self.assertEqual(_sales_count("POR"), "")
-        self.assertEqual(_sales_count("Vendido por 12"), "")
-
+class StorageTests(unittest.TestCase):
     def test_parses_date_formats_and_quantities(self):
         for value in ("10/10/2026 15:42:08", "2026-10-10T15:42:08"):
             parsed = parse_event_datetime(value)
@@ -172,48 +36,49 @@ class SalesReportingTests(unittest.TestCase):
         self.assertEqual(classify_movement("Ajuste manual"), "other")
 
     def test_repeated_daily_scan_does_not_duplicate_sales(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            repository = SalesRepository(Path(temp_dir) / "report.db")
-            product = {
-                "product_id": "123",
-                "name": "Produto teste",
-                "category": "Categoria teste",
-                "url": "https://dash.wedrop.com.br/catalog/123",
-                "sku": "SKU-123",
-                "stock": "15",
-                "real_balance": "12",
-                "description": "Descrição do produto",
-                "stock_history": [
-                    {
-                        "type": "Saída",
-                        "quantity": "- 2",
-                        "date": "10/10/2026 15:42:08",
-                    },
-                    {
-                        "type": "Entrada",
-                        "quantity": "+ 5",
-                        "date": "10/10/2026 15:43:08",
-                    },
-                ],
-            }
-            repository.save_product(product, "2026-10-10T16:00:00")
-            repository.save_product(product, "2026-10-11T16:00:00")
+        temp_dir = self.enterContext(tempfile.TemporaryDirectory())
+        repository = SalesRepository(Path(temp_dir) / "report.db")
+        self.addCleanup(repository.close)
+        product = {
+            "product_id": "123",
+            "name": "Produto teste",
+            "category": "Categoria teste",
+            "url": "https://dash.wedrop.com.br/catalog/123",
+            "sku": "SKU-123",
+            "stock": "15",
+            "real_balance": "12",
+            "description": "Descrição do produto",
+            "stock_history": [
+                {
+                    "type": "Saída",
+                    "quantity": "- 2",
+                    "date": "10/10/2026 15:42:08",
+                },
+                {
+                    "type": "Entrada",
+                    "quantity": "+ 5",
+                    "date": "10/10/2026 15:43:08",
+                },
+            ],
+        }
+        repository.save_products([product], "2026-10-10T16:00:00")
+        repository.save_products([product], "2026-10-11T16:00:00")
 
-            sales = repository.sales_for_day(date(2026, 10, 10))
-            entries = repository.stock_entries_for_day(date(2026, 10, 10))
-            self.assertEqual(len(sales), 1)
-            self.assertEqual(sales[0]["units_sold"], 2)
-            self.assertEqual(len(entries), 1)
-            self.assertEqual(entries[0]["quantity"], 5)
-            saved_product = repository.connection.execute(
-                "SELECT sku, stock, real_balance, description FROM products"
-            ).fetchone()
-            self.assertEqual(tuple(saved_product), ("SKU-123", "15", "12", "Descrição do produto"))
-            repository.close()
+        sales = repository.sales_for_day(date(2026, 10, 10))
+        entries = repository.stock_entries_for_day(date(2026, 10, 10))
+        self.assertEqual(len(sales), 1)
+        self.assertEqual(sales[0]["units_sold"], 2)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["quantity"], 5)
+        saved_product = repository.connection.execute(
+            "SELECT sku, stock, real_balance, description FROM products"
+        ).fetchone()
+        self.assertEqual(tuple(saved_product), ("SKU-123", "15", "12", "Descrição do produto"))
 
     def test_period_activity_aggregates_inclusive_dates_by_category_and_product(self):
         temp_dir = self.enterContext(tempfile.TemporaryDirectory())
         repository = SalesRepository(Path(temp_dir) / "report.db")
+        self.addCleanup(repository.close)
         self.addCleanup(repository.close)
         repository.save_category(
             {"url": "https://example.com/cat/a", "name": "Categoria A"},
@@ -345,6 +210,7 @@ class SalesReportingTests(unittest.TestCase):
         temp_dir = self.enterContext(tempfile.TemporaryDirectory())
         repository = SalesRepository(Path(temp_dir) / "report.db")
         self.addCleanup(repository.close)
+        self.addCleanup(repository.close)
         with self.assertRaisesRegex(ValueError, "data inicial"):
             repository.category_activity(date(2026, 10, 12), date(2026, 10, 10))
 
@@ -382,7 +248,7 @@ class SalesReportingTests(unittest.TestCase):
             repository.close()
 
     def test_supabase_requires_configuration_and_reports_upsert_errors(self):
-        with patch("sales_reporting.load_local_environment"):
+        with patch("wedrop.storage.supabase_repository.load_environment"):
             with patch.dict("os.environ", {}, clear=True):
                 with self.assertRaisesRegex(RuntimeError, "Supabase não configurado"):
                     SupabaseRepository.from_environment()
@@ -397,6 +263,47 @@ class SalesReportingTests(unittest.TestCase):
                 repository._upsert(
                     "wedrop_products", [{"product_id": "1"}], "product_id"
                 )
+        repository.close()
+
+    def test_supabase_retries_temporary_connection_failure(self):
+        repository = SupabaseRepository("https://example.supabase.co", "test-key")
+        successful_response = Mock(spec=requests.Response)
+        successful_response.ok = True
+        with patch.object(
+            repository.session,
+            "post",
+            side_effect=[
+                requests.exceptions.SSLError("temporary EOF"),
+                successful_response,
+            ],
+        ) as post:
+            with patch("wedrop.storage.supabase_repository.time.sleep") as sleep:
+                repository._upsert(
+                    "wedrop_products", [{"product_id": "1"}], "product_id"
+                )
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(1)
+        repository.close()
+
+    def test_supabase_retries_temporary_http_failure(self):
+        repository = SupabaseRepository("https://example.supabase.co", "test-key")
+        unavailable_response = Mock(spec=requests.Response)
+        unavailable_response.ok = False
+        unavailable_response.status_code = 503
+        unavailable_response.text = "Service unavailable"
+        successful_response = Mock(spec=requests.Response)
+        successful_response.ok = True
+        with patch.object(
+            repository.session,
+            "post",
+            side_effect=[unavailable_response, successful_response],
+        ) as post:
+            with patch("wedrop.storage.supabase_repository.time.sleep") as sleep:
+                repository._upsert(
+                    "wedrop_products", [{"product_id": "1"}], "product_id"
+                )
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(1)
         repository.close()
 
     def test_supabase_validates_all_required_tables_before_scraping(self):
@@ -450,64 +357,3 @@ class SalesReportingTests(unittest.TestCase):
         self.assertEqual(history_payload[0]["event_kind"], "sale")
         repository.close()
 
-    def test_product_identifier_and_label_extraction(self):
-        self.assertEqual(
-            product_id_from_url("https://dash.wedrop.com.br/catalog/12345"),
-            "12345",
-        )
-        self.assertEqual(
-            product_id_from_url("https://dash.wedrop.com.br/catalog/categoria-casa"),
-            "",
-        )
-        self.assertEqual(value_for_label("Saldo real:\n42 un.", ("Saldo real",)), "42 un.")
-
-    def test_expired_session_authenticates_and_saves_cookies_in_same_run(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            monitor = WedropMonitor(Path(temp_dir) / "report.db")
-            login_form = Mock()
-            login_form.count = AsyncMock(return_value=1)
-            email_input = Mock()
-            email_input.first = Mock()
-            email_input.first.fill = AsyncMock()
-            password_input = Mock()
-            password_input.first = Mock()
-            password_input.first.fill = AsyncMock()
-            post_login_form = Mock()
-            post_login_form.count = AsyncMock(return_value=0)
-            submit_button = Mock()
-            submit_button.click = AsyncMock()
-            page = Mock()
-            page.url = "https://dash.wedrop.com.br/login"
-            page.goto = AsyncMock()
-            page.wait_for_timeout = AsyncMock()
-            page.wait_for_function = AsyncMock()
-            page.locator = Mock(
-                side_effect=[
-                    login_form,
-                    email_input,
-                    password_input,
-                    submit_button,
-                    post_login_form,
-                ]
-            )
-            context = Mock()
-            context.storage_state = AsyncMock()
-
-            asyncio.run(
-                monitor.ensure_authenticated(
-                    page,
-                    context,
-                    email="person@example.com",
-                    password="test-password",
-                    prompt_for_credentials=False,
-                )
-            )
-
-            email_input.first.fill.assert_awaited_once_with("person@example.com")
-            password_input.first.fill.assert_awaited_once_with("test-password")
-            context.storage_state.assert_awaited_once()
-            monitor.close()
-
-
-if __name__ == "__main__":
-    unittest.main()

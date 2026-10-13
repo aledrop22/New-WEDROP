@@ -31,3 +31,6 @@ __pycache__/
 
 # Arquivos do VS Code
 .vscode/
+# Dados da coleta (data.json, banco, backups) e logs
+dados/
+logs/

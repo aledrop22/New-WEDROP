@@ -81,11 +81,6 @@ class WedropCatalogSpider(scrapy.Spider):
             page = response.meta["playwright_page"]
 
             try:
-                await page.wait_for_timeout(2000)
-            except:
-                pass
-
-            try:
                 page_content = await asyncio.wait_for(page.content(), timeout=10.0)
             except asyncio.TimeoutError:
                 self.log(f"ERRO: Timeout ao obter conteúdo do catálogo. Usando fallback.")
@@ -212,11 +207,6 @@ class WedropCatalogSpider(scrapy.Spider):
             page = response.meta["playwright_page"]
 
             try:
-                await page.wait_for_timeout(2000)
-            except:
-                pass
-
-            try:
                 page_content = await asyncio.wait_for(page.content(), timeout=10.0)
             except asyncio.TimeoutError:
                 self.log(f"ERRO: Timeout ao obter conteúdo da categoria. Usando fallback.")
@@ -309,12 +299,7 @@ class WedropCatalogSpider(scrapy.Spider):
 
             page = response.meta["playwright_page"]
 
-            try:
-                await page.wait_for_timeout(2000)
-            except:
-                pass
-
-            # Try to click on "Histórico de Estoque" tab if it exists
+                        # Try to click on "Histórico de Estoque" tab if it exists
             try:
                 stock_history_tab = page.locator('text=Histórico de Estoque')
                 if await stock_history_tab.count() > 0:
