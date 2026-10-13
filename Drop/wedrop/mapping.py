@@ -8,8 +8,9 @@ Regras de execução:
 - Coleta parcial (--categoria ou --limite): só acrescenta dados e não altera o estado.
 
 Coleta diária incremental (run_incremental): compara a quantidade de cada categoria
-com a última coleta. Igual: lê só preço e saldo dos produtos guardados. Diferente
-(ou sem histórico): lê a categoria inteira.
+com a última coleta. Igual: compara preço e saldo de cada produto com o dia anterior
+(saldo mudou: lê o histórico de saldo, onde estão as vendas). Diferente (ou sem
+registro anterior): lê a categoria inteira.
 """
 
 from __future__ import annotations
@@ -198,10 +199,11 @@ class _ProductCrawler:
         self._relogin = relogin
         self._done = 0
         self._total = 0
+        self._unchanged = 0
 
     async def crawl(self, jobs: list[ProductJob]) -> list[tuple[ProductJob, Exception]]:
         pending: deque[ProductJob] = deque(jobs)
-        self._done, self._total = 0, len(jobs)
+        self._done, self._total, self._unchanged = 0, len(jobs), 0
         failures: list[tuple[ProductJob, Exception]] = []
         relogins = 0
         while pending:
@@ -217,6 +219,8 @@ class _ProductCrawler:
                 log_progress("  Sessão WeDrop expirou; reautenticando e retomando de onde parou...")
                 await self._relogin()
         self._sink.flush()
+        if self._unchanged:
+            log_progress(f"  {self._unchanged} de {self._total} produtos sem mudança de preço e saldo; mantidos como estavam.")
         return failures
 
     async def _work(
@@ -239,6 +243,9 @@ class _ProductCrawler:
                 log_progress(f"  ERRO ao ler produto {job.product_id}: {exc}")
                 continue
             self._done += 1
+            if product is None:  # preço e saldo iguais ao dia anterior: nada a gravar
+                self._unchanged += 1
+                continue
             self._report(product)
             self._sink.add(product)
 
@@ -400,7 +407,9 @@ async def run_incremental(
 ) -> MappingSummary:
     """Coleta diária: lê só o que pode ter mudado desde a última coleta.
 
-    Quantidade igual à da última coleta e produtos já guardados: lê só preço e saldo.
+    Quantidade igual à da última coleta e produtos já guardados: compara preço e saldo
+    com o dia anterior. Sem mudança, nada é gravado; preço mudou, grava o preço; saldo
+    mudou, lê o histórico de saldo para registrar as vendas.
     Quantidade diferente, categoria nova ou produtos faltando no data.json: lê a
     categoria inteira. Falha numa leitura rápida também leva à categoria inteira.
     """
@@ -505,7 +514,7 @@ async def _refresh_category(
 ) -> None:
     reason = _full_read_reason(category, baselines, len(known))
     if reason is None:
-        log_progress(f"{label}: {category.count} produtos, sem alteração; lendo só preço e saldo de {len(known)}.")
+        log_progress(f"{label}: {category.count} produtos, sem alteração; comparando preço e saldo de {len(known)} com o dia anterior.")
         failures = await crawler.crawl([_balance_job(record, category) for record in known])
         if not failures:
             summary.balance_only_categories.append(category.name)

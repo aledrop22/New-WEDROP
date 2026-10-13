@@ -25,12 +25,15 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
 
 `python -m wedrop diaria` não percorre o site inteiro. Antes de ler produtos, compara a quantidade de cada categoria (mostrada na página de categorias) com a última coleta, guardada na tabela `categories` do SQLite:
 
-- **Quantidade igual** e todos os produtos da categoria já no `data.json`: lê só **preço e saldo** de cada produto. O restante já está salvo, e a listagem da categoria não é percorrida.
+- **Quantidade igual** e todos os produtos da categoria já no `data.json`: compara **preço e saldo** de cada produto com o dia anterior. A listagem da categoria não é percorrida.
+  - Preço e saldo iguais: nada é gravado, o registro fica como estava.
+  - Só o preço mudou: grava o novo preço.
+  - Saldo mudou: lê a aba **Histórico de Estoque** e grava as movimentações novas (vendas e entradas), que aparecem no painel.
 - **Quantidade diferente**, categoria nunca coletada ou `data.json` com menos produtos que o site: lê a **categoria inteira** (listagem completa e todos os campos).
 - Se uma leitura de preço e saldo falhar, a categoria inteira é lida.
 - Produto que saiu da categoria é retirado do `data.json` quando a categoria é lida inteira.
 
-Limite: uma categoria com quantidade igual não tem o histórico de movimentações relido. Vendas que não mudam a quantidade só entram no painel quando a categoria for lida inteira. A coleta manual (`coletar`) continua completa.
+A coleta manual (`coletar`) continua completa.
 
 ## Estrutura
 

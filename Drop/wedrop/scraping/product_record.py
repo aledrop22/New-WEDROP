@@ -136,6 +136,28 @@ def build_balance_update(known: dict[str, Any], snapshot: PageSnapshot) -> dict[
     }
 
 
+UNCHANGED = "sem_mudanca"
+PRICE_CHANGED = "preco"
+STOCK_CHANGED = "saldo"
+
+
+def compare_balance(known: dict[str, Any], update: dict[str, str]) -> str:
+    """Compara preço e saldo de hoje com o registro do dia anterior. Saldo tem prioridade."""
+    if update["stock"] != str(known.get("stock") or ""):
+        return STOCK_CHANGED
+    if update["price"] != str(known.get("price") or ""):
+        return PRICE_CHANGED
+    return UNCHANGED
+
+
+def fill_from_known(record: dict[str, Any], known: dict[str, Any]) -> dict[str, Any]:
+    """Campos que a releitura deixou vazios (ex.: CNPJ que demorou a carregar) mantêm o valor anterior."""
+    return {
+        field: known[field] if value in ("", None) and known.get(field) else value
+        for field, value in record.items()
+    }
+
+
 def build_product_record(
     product_id: str, url: str, category_name: str, snapshot: PageSnapshot
 ) -> dict[str, Any]:

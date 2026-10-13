@@ -16,7 +16,15 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from ..logs import log_progress
 from ..config import PRODUCT_READ_ATTEMPTS
-from .product_record import PageSnapshot, build_balance_update, build_product_record
+from .product_record import (
+    PRICE_CHANGED,
+    UNCHANGED,
+    PageSnapshot,
+    build_balance_update,
+    build_product_record,
+    compare_balance,
+    fill_from_known,
+)
 from .session import SessionExpiredError
 
 READY_SELECTOR = (
@@ -126,7 +134,9 @@ class ProductNotLoadedError(RuntimeError):
 class ProductJob:
     """Um produto a ser lido: ID, endereço e categoria.
 
-    Com `known_record` (registro já guardado), só preço e saldo são lidos; o resto vem dele.
+    Com `known_record` (registro do dia anterior), preço e saldo são comparados com ele:
+    sem mudança, nada é gravado; preço mudou, só o preço é atualizado; saldo mudou,
+    o histórico de saldo é lido para registrar as vendas.
     """
 
     product_id: str
@@ -145,7 +155,8 @@ class ProductReader:
     def __init__(self, page: Page):
         self._page = page
 
-    async def read(self, job: ProductJob) -> dict[str, Any]:
+    async def read(self, job: ProductJob) -> dict[str, Any] | None:
+        """Registro do produto. None quando um produto conhecido não mudou preço nem saldo."""
         for attempt in range(1, PRODUCT_READ_ATTEMPTS + 1):
             try:
                 return await self._read_once(job)
@@ -165,7 +176,7 @@ class ProductReader:
                 await self._page.wait_for_timeout(1000)
         raise RuntimeError("Limite de tentativas excedido.")  # pragma: no cover
 
-    async def _read_once(self, job: ProductJob) -> dict[str, Any]:
+    async def _read_once(self, job: ProductJob) -> dict[str, Any] | None:
         page = self._page
         await page.goto(job.url, wait_until="domcontentloaded")
         await self._wait_for_content()
@@ -175,14 +186,25 @@ class ProductReader:
             raise SessionExpiredError()
         if not _has_name_or_price(initial):
             raise ProductNotLoadedError(job.product_id)
-        if job.known_record is not None:
-            return await self._read_balance(job, initial)
-
         body_after_stock = None
         if await _activate_tab(page, STOCK_TAB_NAME):
             body_after_stock = await page.evaluate("() => document.body.innerText")
+
+        known = job.known_record
+        if known is not None:
+            update = await self._balance_update(known, initial, body_after_stock)
+            change = compare_balance(known, update)
+            if change == UNCHANGED:
+                return None
+            if change == PRICE_CHANGED:
+                log_progress(f"  Preço mudou (ID {job.product_id}): {known.get('price')} → {update['price']}.")
+                return {**known, "price": update["price"]}
+            log_progress(
+                f"  Saldo mudou (ID {job.product_id}): {known.get('stock')} → {update['stock']}; lendo o histórico."
+            )
+
         await _activate_tab(page, HISTORY_TAB_NAME)
-        if not _mentions_cnpj(initial["bodyText"], body_after_stock):
+        if known is None and not _mentions_cnpj(initial["bodyText"], body_after_stock):
             # O CNPJ do fornecedor chega depois do resto da página; uma releitura basta.
             await page.wait_for_timeout(_CNPJ_RETRY_WAIT_MS)
             body_after_stock = await page.evaluate("() => document.body.innerText")
@@ -204,13 +226,13 @@ class ProductReader:
             history_rows=tuple(details["history"]),
             body_text_after_stock_tab=body_after_stock,
         )
-        return build_product_record(job.product_id, job.url, job.category_name, snapshot)
+        record = build_product_record(job.product_id, job.url, job.category_name, snapshot)
+        return record if known is None else fill_from_known(record, known)
 
-    async def _read_balance(self, job: ProductJob, initial: dict[str, Any]) -> dict[str, Any]:
-        """Só preço e saldo: a aba de estoque é lida; histórico, CNPJ e demais campos não."""
-        body_after_stock = None
-        if await _activate_tab(self._page, STOCK_TAB_NAME):
-            body_after_stock = await self._page.evaluate("() => document.body.innerText")
+    async def _balance_update(
+        self, known: dict[str, Any], initial: dict[str, Any], body_after_stock: str | None
+    ) -> dict[str, str]:
+        """Preço e saldo da página, já com a aba de estoque aberta."""
         stock_candidates = await self._page.evaluate(_STOCK_TEXT_JS, list(_STOCK_SELECTORS))
         snapshot = PageSnapshot(
             title=initial["title"],
@@ -221,7 +243,7 @@ class ProductReader:
             stock_candidates=tuple(stock_candidates),
             body_text_after_stock_tab=body_after_stock,
         )
-        return {**job.known_record, **build_balance_update(job.known_record, snapshot)}
+        return build_balance_update(known, snapshot)
 
     async def _loaded_snapshot(self) -> dict[str, Any]:
         """Espera o nome ou o preço aparecerem e lê o DOM; páginas lentas ainda estão em esqueleto."""

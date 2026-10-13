@@ -9,7 +9,15 @@ from unittest.mock import patch
 from wedrop.mapping import MappingSummary, _full_read_reason, _ProductsJsonFile, _refresh_category
 from wedrop.scraping.catalog import Category
 from wedrop.scraping.product_page import ProductJob
-from wedrop.scraping.product_record import PageSnapshot, build_balance_update
+from wedrop.scraping.product_record import (
+    PRICE_CHANGED,
+    STOCK_CHANGED,
+    UNCHANGED,
+    PageSnapshot,
+    build_balance_update,
+    compare_balance,
+    fill_from_known,
+)
 from wedrop.storage import products_file
 from wedrop.storage.sqlite_repository import SalesRepository
 
@@ -63,6 +71,24 @@ class BalanceUpdateTests(unittest.TestCase):
     def test_missing_price_keeps_the_stored_price(self):
         update = build_balance_update(self.known, PageSnapshot(body_text=""))
         self.assertEqual(update["price"], "R$ 10,00")
+
+
+class CompareWithPreviousDayTests(unittest.TestCase):
+    known = {"price": "R$ 10,00", "stock": "3 un."}
+
+    def test_same_price_and_stock_is_unchanged(self):
+        self.assertEqual(compare_balance(self.known, {"price": "R$ 10,00", "stock": "3 un."}), UNCHANGED)
+
+    def test_only_price_changed(self):
+        self.assertEqual(compare_balance(self.known, {"price": "R$ 12,00", "stock": "3 un."}), PRICE_CHANGED)
+
+    def test_stock_change_wins_over_price_change(self):
+        self.assertEqual(compare_balance(self.known, {"price": "R$ 12,00", "stock": "2 un."}), STOCK_CHANGED)
+
+    def test_reread_keeps_previous_value_of_fields_left_empty(self):
+        record = {"price": "R$ 12,00", "cnpj": "", "stock": "2 un."}
+        merged = fill_from_known(record, {"price": "R$ 10,00", "cnpj": "12.345.678/0001-90", "stock": "3 un."})
+        self.assertEqual(merged, {"price": "R$ 12,00", "cnpj": "12.345.678/0001-90", "stock": "2 un."})
 
 
 class ProductsJsonFileTests(unittest.TestCase):
