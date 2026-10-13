@@ -126,16 +126,6 @@ class ProductsJsonFileTests(unittest.TestCase):
         self.assertEqual(records[2]["product_id"], "2")
         self.assertEqual(records[3]["product_id"], "3")
 
-    def test_products_no_longer_listed_in_category_are_removed(self):
-        products_json = _ProductsJsonFile(self.path)
-        products_json.upsert([{"product_id": "3", "category": "Cozinha", "price": "5"}])
-        removed = products_json.remove_missing("Cozinha", {"1"})
-        products_json.save()
-
-        self.assertEqual(removed, ["3"])
-        ids = [record["product_id"] for record in products_file.read_records(self.path) if isinstance(record, dict)]
-        self.assertEqual(ids, ["1", "2"])
-
 
 class FakeCrawler:
     """Registra as leituras pedidas; cada chamada falha nos IDs indicados em `failures_per_call`."""
@@ -212,17 +202,28 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(job.known_record is not None for job in crawler.calls[0]))
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 2})
 
-    async def test_changed_category_is_read_in_full_and_products_gone_from_site_are_removed(self):
+    async def test_changed_category_reads_new_and_sold_out_products_in_full_and_keeps_them(self):
+        # Produto 2 saiu da listagem (acabou o estoque); produto 9 entrou.
         listing = {"1": "https://x/catalog/1", "9": "https://x/catalog/9"}
         summary, crawler = await self._refresh(count=2, baseline=1, listing=listing)
 
         self.assertEqual(summary.full_categories, ["Cozinha"])
         self.assertEqual(summary.balance_only_categories, [])
-        self.assertEqual([job.product_id for job in crawler.calls[0]], ["1", "9"])
-        self.assertTrue(all(job.known_record is None for job in crawler.calls[0]))
+        listed, gone = crawler.calls
+        self.assertEqual([job.product_id for job in listed], ["1", "9"])
+        self.assertIsNotNone(listed[0].known_record)  # já salvo: compara preço e saldo
+        self.assertIsNone(listed[1].known_record)  # novo: leitura completa
+        self.assertEqual([(job.product_id, job.known_record) for job in gone], [("2", None)])
         stored_ids = sorted(record["product_id"] for record in self.products_json.by_category()["Cozinha"])
-        self.assertEqual(stored_ids, ["1"])
+        self.assertEqual(stored_ids, ["1", "2"])
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 2})
+
+    async def test_sold_out_product_that_fails_to_open_does_not_block_the_category(self):
+        listing = {"1": "https://x/catalog/1"}
+        summary, _ = await self._refresh(count=1, baseline=2, listing=listing, failures_per_call=[set(), {"2"}])
+
+        self.assertEqual(summary.failed_ids, [])
+        self.assertEqual(self.repository.category_baselines(), {"Cozinha": 1})
 
     async def test_failed_balance_read_falls_back_to_full_category(self):
         listing = {"1": "https://x/catalog/1", "2": "https://x/catalog/2"}
@@ -232,8 +233,9 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(summary.balance_only_categories, [])
         self.assertEqual(summary.full_categories, ["Cozinha"])
-        self.assertEqual(len(crawler.calls), 2)
-        self.assertEqual([job.product_id for job in crawler.calls[1]], ["1", "2"])
+        light, listed, gone = crawler.calls
+        self.assertEqual([job.product_id for job in listed], ["1", "2"])
+        self.assertEqual(gone, [])
         self.assertEqual(summary.failed_ids, [])
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 2})
 

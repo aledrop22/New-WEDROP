@@ -29,9 +29,11 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
   - Preço e saldo iguais: nada é gravado, o registro fica como estava.
   - Só o preço mudou: grava o novo preço.
   - Saldo mudou: lê a aba **Histórico de Estoque** e grava as movimentações novas (vendas e entradas), que aparecem no painel.
-- **Quantidade diferente**, categoria nunca coletada ou `data.json` com menos produtos que o site: lê a **categoria inteira** (listagem completa e todos os campos).
+- **Quantidade diferente**, categoria nunca coletada ou `data.json` com menos produtos que o site: percorre a **listagem inteira** da categoria para saber o que entrou e o que saiu.
+  - Aumentou: produto novo (na listagem e ainda não salvo) é lido por inteiro.
+  - Diminuiu: produto que saiu da listagem acabou o estoque. A página dele é lida por inteiro (últimas vendas no histórico e selo Indisponível), e ele continua salvo.
+  - Produto que continua na listagem: mesma comparação de preço e saldo com o dia anterior.
 - Se uma leitura de preço e saldo falhar, a categoria inteira é lida.
-- Produto que saiu da categoria é retirado do `data.json` quando a categoria é lida inteira.
 
 A coleta manual (`coletar`) continua completa.
 

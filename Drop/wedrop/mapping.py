@@ -104,11 +104,7 @@ class _ProductsJsonFile:
     def __init__(self, path: Path):
         self._path = path
         self._records: list[products_file.Record] = products_file.read_records(path)
-        self._position: dict[str, int] = {}
-        self._index()
-
-    def _index(self) -> None:
-        self._position = {
+        self._position: dict[str, int] = {
             str(record["product_id"]): index
             for index, record in enumerate(self._records)
             if isinstance(record, dict) and record.get("product_id")
@@ -130,22 +126,6 @@ class _ProductsJsonFile:
                 self._records.append(record)
             else:
                 self._records[index] = record
-
-    def remove_missing(self, category_name: str, listed_ids: set[str]) -> list[str]:
-        """Tira os produtos da categoria que deixaram de aparecer na listagem completa."""
-        missing = {
-            product_id
-            for product_id, index in self._position.items()
-            if self._records[index].get("category") == category_name and product_id not in listed_ids
-        }
-        if missing:
-            self._records = [
-                record
-                for record in self._records
-                if not (isinstance(record, dict) and str(record.get("product_id", "")) in missing)
-            ]
-            self._index()
-        return sorted(missing)
 
     def save(self) -> None:
         products_file.write_records_atomic(self._path, self._records)
@@ -525,15 +505,32 @@ async def _refresh_category(
     log_progress(f"{label}: categoria inteira ({reason}).")
     summary.full_categories.append(category.name)
     links = await _read_listing(listing_page, category, summary)
-    log_progress(f"Categoria {category.name}: {len(links)} listados, todos lidos.")
-    failures = await crawler.crawl([ProductJob(product_id, url, category.name) for product_id, url in links.items()])
+    known_by_id = {str(record["product_id"]): record for record in known}
+    listed_jobs = [
+        _balance_job(known_by_id[product_id], category)
+        if product_id in known_by_id
+        else ProductJob(product_id, url, category.name)
+        for product_id, url in links.items()
+    ]
+    new_count = sum(1 for product_id in links if product_id not in known_by_id)
+    # Produto que saiu da listagem acabou o estoque: a página dele mostra as últimas
+    # vendas no histórico e o selo Indisponível. Continua salvo e é lido por inteiro.
+    gone = [record for product_id, record in known_by_id.items() if product_id not in links]
+    log_progress(
+        f"Categoria {category.name}: {len(links)} listados ({new_count} novos); "
+        f"{len(gone)} saíram da listagem e serão lidos por inteiro."
+    )
+    failures = await crawler.crawl(listed_jobs)
     summary.failed_ids.extend(job.product_id for job, _ in failures)
+    gone_failures = await crawler.crawl(
+        [ProductJob(str(record["product_id"]), str(record.get("url", "")), category.name) for record in gone]
+    )
+    if gone_failures:
+        # A página pode ter sido removida do site; o registro anterior fica como estava.
+        log_progress(f"  {len(gone_failures)} produto(s) que saíram da listagem não abriram; mantidos como estavam.")
     if failures or category.name in summary.shortfall_categories:
         log_progress(f"Categoria {category.name} não ficou completa; a próxima execução a lê de novo.")
         return
-    removed = products_json.remove_missing(category.name, set(links))
-    if removed:
-        log_progress(f"{len(removed)} produto(s) saíram de {category.name} e foram retirados do data.json.")
     _save_category(repository, supabase, category, len(links), captured_at)
 
 
