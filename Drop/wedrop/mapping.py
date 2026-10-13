@@ -571,7 +571,9 @@ def _is_sold_out(record: dict) -> bool:
 
 
 def _balance_job(record: dict, category: Category) -> ProductJob:
-    return ProductJob(str(record["product_id"]), str(record.get("url", "")), category.name, record)
+    # Registro salvo sem status (página lida antes do cabeçalho carregar) é relido por inteiro.
+    known = record if effective_status(record.get("is_active"), record.get("availability")) else None
+    return ProductJob(str(record["product_id"]), str(record.get("url", "")), category.name, known)
 
 
 def _save_category(

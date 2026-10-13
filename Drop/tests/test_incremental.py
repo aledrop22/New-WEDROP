@@ -152,9 +152,12 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 json.dumps(record)
                 for record in (
-                    {"product_id": "1", "category": "Cozinha", "price": "10", "url": "https://x/catalog/1", "stock_history": []},
-                    {"product_id": "2", "category": "Cozinha", "price": "20", "url": "https://x/catalog/2", "stock_history": []},
-                    {"product_id": "3", "category": "Casa", "price": "30", "url": "https://x/catalog/3", "stock_history": []},
+                    {"product_id": "1", "category": "Cozinha", "price": "10", "url": "https://x/catalog/1",
+                     "availability": "Disponível", "is_active": "Ativo", "stock_history": []},
+                    {"product_id": "2", "category": "Cozinha", "price": "20", "url": "https://x/catalog/2",
+                     "availability": "Disponível", "is_active": "Ativo", "stock_history": []},
+                    {"product_id": "3", "category": "Casa", "price": "30", "url": "https://x/catalog/3",
+                     "availability": "Disponível", "is_active": "Ativo", "stock_history": []},
                     # Já esgotado em coleta anterior: não deve ser relido enquanto estiver fora da listagem.
                     {"product_id": "4", "category": "Cozinha", "price": "40", "url": "https://x/catalog/4",
                      "availability": "Indisponível", "is_active": "Inativo", "stock_history": []},
@@ -204,6 +207,19 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([job.product_id for job in crawler.calls[0]], ["1", "2"])
         self.assertTrue(all(job.known_record is not None for job in crawler.calls[0]))
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 2})
+
+    async def test_product_saved_without_status_is_read_in_full(self):
+        # Página lida antes do selo Disponível/Indisponível: registro sem status.
+        records = [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines()]
+        records[1].update(availability="", is_active="")
+        self.path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+        self.products_json = _ProductsJsonFile(self.path)
+
+        _summary, crawler = await self._refresh(count=2, baseline=2)
+
+        jobs = {job.product_id: job.known_record for job in crawler.calls[0]}
+        self.assertIsNotNone(jobs["1"])
+        self.assertIsNone(jobs["2"])
 
     async def test_changed_category_reads_new_and_sold_out_products_in_full_and_keeps_them(self):
         # Produto 2 saiu da listagem (acabou o estoque); produto 9 entrou.

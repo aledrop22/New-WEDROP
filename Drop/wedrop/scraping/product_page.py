@@ -40,9 +40,14 @@ _PRODUCT_LOADED_JS = """() => {
     const element = document.querySelector(selector);
     return !!element && element.innerText.trim().length > 0;
   };
-  return filled("h2.chakra-heading.css-18puvtl, h2.chakra-heading, h1.chakra-heading")
+  // Sem o selo Disponível/Indisponível, o cabeçalho do produto ainda não carregou.
+  const plain = (value) => value.normalize("NFD").replace(/\\p{M}/gu, "").trim().toLowerCase();
+  const hasBadge = Array.from(document.querySelectorAll("span.chakra-badge"))
+    .some((badge) => ["disponivel", "indisponivel"].includes(plain(badge.innerText)));
+  return hasBadge && (
+    filled("h2.chakra-heading.css-18puvtl, h2.chakra-heading, h1.chakra-heading")
     || filled("p.chakra-text.css-1enygfq")
-    || filled("p[class*='1hulv5q']");
+    || filled("p[class*='1hulv5q']"));
 }"""
 
 _NAME_SELECTORS = (
@@ -127,7 +132,7 @@ _DETAILS_SNAPSHOT_JS = """(sel) => {
 
 
 class ProductNotLoadedError(RuntimeError):
-    """A página abriu sem nome nem preço; não é gravado para não salvar um produto vazio."""
+    """A página abriu sem o cabeçalho do produto; não é gravada para não salvar um produto sem status."""
 
 
 @dataclass(frozen=True)
@@ -184,7 +189,7 @@ class ProductReader:
         initial = await self._loaded_snapshot()
         if initial["hasPasswordInput"]:
             raise SessionExpiredError()
-        if not _has_name_or_price(initial):
+        if not _header_loaded(initial):
             raise ProductNotLoadedError(job.product_id)
         body_after_stock = None
         if await _activate_tab(page, STOCK_TAB_NAME):
@@ -246,7 +251,7 @@ class ProductReader:
         return build_balance_update(known, snapshot)
 
     async def _loaded_snapshot(self) -> dict[str, Any]:
-        """Espera o nome ou o preço aparecerem e lê o DOM; páginas lentas ainda estão em esqueleto."""
+        """Espera o nome ou o preço e o selo aparecerem e lê o DOM; páginas lentas ainda estão em esqueleto."""
         try:
             await self._page.wait_for_function(_PRODUCT_LOADED_JS, timeout=_LOAD_TIMEOUT_MS)
         except PlaywrightTimeoutError:
@@ -264,9 +269,14 @@ def _mentions_cnpj(*texts: str | None) -> bool:
     return any(text and "CNPJ" in text for text in texts)
 
 
-def _has_name_or_price(snapshot: dict[str, Any]) -> bool:
+def _header_loaded(snapshot: dict[str, Any]) -> bool:
+    """Nome ou preço e o selo de disponibilidade na tela.
+
+    Sem o selo, a página ainda mostrava só as abas de baixo (fornecedor, medidas):
+    o produto era salvo sem nome, preço e status e aparecia como "Sem status".
+    """
     texts = [*snapshot["nameCandidates"], *snapshot["priceCandidates"], *snapshot["altPriceCandidates"]]
-    return any(texts)
+    return bool(snapshot["availabilityBadge"]) and any(texts)
 
 
 def _initial_selectors() -> dict[str, Any]:

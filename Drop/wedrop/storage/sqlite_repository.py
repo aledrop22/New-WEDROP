@@ -75,6 +75,13 @@ _INACTIVE_SQL = (
     "OR LOWER(TRIM(wedrop_status(p.is_active, p.availability))) IN ('false', '0', 'não', 'nao'))"
 )
 
+# Nem ativo nem inativo: em geral, página lida antes do selo Disponível/Indisponível aparecer.
+_WITHOUT_STATUS_SQL = (
+    "(TRIM(wedrop_status(p.is_active, p.availability)) = '' "
+    f"OR (NOT {_ACTIVE_SQL} AND NOT {_INACTIVE_SQL} "
+    "AND LOWER(TRIM(wedrop_status(p.is_active, p.availability))) NOT LIKE '%active%'))"
+)
+
 
 CATEGORY_COLUMNS = ("category_url", "name", "expected_products", "mapped_products", "updated_at")
 STOCK_EVENT_COLUMNS = (
@@ -242,11 +249,7 @@ class SalesRepository:
                                        THEN p.product_id END) AS active_products,
                    COUNT(DISTINCT CASE WHEN {_INACTIVE_SQL}
                                        THEN p.product_id END) AS inactive_products,
-                   COUNT(DISTINCT CASE WHEN TRIM(wedrop_status(p.is_active, p.availability)) = ''
-                                         OR (NOT {_ACTIVE_SQL}
-                                             AND NOT {_INACTIVE_SQL}
-                                             AND LOWER(TRIM(wedrop_status(p.is_active, p.availability)))
-                                                 NOT LIKE '%active%')
+                   COUNT(DISTINCT CASE WHEN {_WITHOUT_STATUS_SQL}
                                        THEN p.product_id END) AS products_without_status
             FROM categories AS c
             LEFT JOIN products AS p ON p.category = c.name
@@ -397,6 +400,17 @@ class SalesRepository:
             ORDER BY e.event_at DESC
             """,
             (start_at, end_at),
+        )
+
+    def products_without_status(self) -> list[sqlite3.Row]:
+        """Produtos sem status ativo/inativo, para conferir no painel."""
+        return self._rows(
+            f"""
+            SELECT p.product_id, p.name, p.category, p.url, p.supplier, p.stock, p.updated_at
+            FROM products AS p
+            WHERE {_WITHOUT_STATUS_SQL}
+            ORDER BY p.category COLLATE NOCASE, p.product_id
+            """
         )
 
     def product_count(self) -> int:

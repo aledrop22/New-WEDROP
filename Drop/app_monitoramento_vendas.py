@@ -50,6 +50,11 @@ APP_SECRETS = (
     "SUPABASE_KEY",
 )
 SNAPSHOT_TTL_SECONDS = 300
+TOP_CATEGORIES = 5
+WITHOUT_STATUS_HELP = (
+    "Produto salvo sem o selo Disponível/Indisponível: a página foi lida antes do "
+    "cabeçalho (nome, preço e selo) carregar. A próxima coleta relê esses produtos por inteiro."
+)
 EMPTY_CATEGORY: dict[str, Any] = {
     "expected_products": None,
     "mapped_products": 0,
@@ -76,6 +81,11 @@ CARD_STYLE = """
 }
 .wd-card-label { font-size: 0.6rem; text-transform: uppercase; opacity: 0.6; margin-top: 0.35rem; }
 .wd-card-value { font-size: 1.05rem; font-weight: 600; white-space: nowrap; }
+.wd-card-top { border-color: rgba(255, 75, 75, 0.7); }
+.wd-card-rank {
+  display: inline-block; font-size: 0.65rem; font-weight: 700; padding: 0 0.4rem;
+  border-radius: 0.6rem; background: rgba(255, 75, 75, 0.85); color: #fff;
+}
 </style>
 """
 
@@ -251,7 +261,9 @@ def _render_summary(categories: list[dict[str, Any]], sales_label: str, restock_
         "Itens inativos", _format_int(sum(row["inactive_products"] for row in categories))
     )
     columns[3].metric(
-        "Sem status", _format_int(sum(row["products_without_status"] for row in categories))
+        "Sem status",
+        _format_int(sum(row["products_without_status"] for row in categories)),
+        help=WITHOUT_STATUS_HELP,
     )
     columns[4].metric(sales_label, _format_int(sum(row["units_sold"] for row in categories)))
     columns[5].metric(
@@ -259,23 +271,55 @@ def _render_summary(categories: list[dict[str, Any]], sales_label: str, restock_
     )
 
 
-def _card_html(row: dict[str, Any]) -> str:
+def _card_html(row: dict[str, Any], rank: int | None) -> str:
+    rank_html = f'<span class="wd-card-rank">{rank}º</span>' if rank else ""
     return (
-        '<div class="wd-card">'
-        f'<div class="wd-card-name">{html.escape(row["name"])}</div>'
-        '<div class="wd-card-label">Produtos</div>'
-        f'<div class="wd-card-value">{_format_int(_products_total(row))}</div>'
+        f'<div class="wd-card{" wd-card-top" if rank else ""}">'
+        f'{rank_html}<div class="wd-card-name">{html.escape(row["name"])}</div>'
         '<div class="wd-card-label">Vendas</div>'
         f'<div class="wd-card-value">{_format_int(row["units_sold"])}</div>'
+        '<div class="wd-card-label">Produtos</div>'
+        f'<div class="wd-card-value">{_format_int(_products_total(row))}</div>'
         "</div>"
     )
 
 
 def _render_category_strip(categories: list[dict[str, Any]]) -> None:
-    """Todas as categorias numa linha: quantidade de produtos e, abaixo, as vendas."""
+    """Categorias da que mais vendeu no período para a que menos vendeu; as 5 primeiras numeradas."""
     st.subheader("Categorias")
-    cards = "".join(_card_html(row) for row in categories)
+    ranked = sorted(categories, key=lambda row: -row["units_sold"])
+    cards = "".join(
+        _card_html(row, position if position <= TOP_CATEGORIES and row["units_sold"] else None)
+        for position, row in enumerate(ranked, start=1)
+    )
     st.markdown(f'<div class="wd-strip">{cards}</div>', unsafe_allow_html=True)
+
+
+def _render_without_status(repository: SalesRepository) -> None:
+    products = repository.products_without_status()
+    if not products:
+        return
+    with st.expander(f"Quais são os {_format_int(len(products))} produtos sem status?"):
+        st.caption(WITHOUT_STATUS_HELP)
+        st.dataframe(
+            [
+                {
+                    "ID": product["product_id"],
+                    "Produto": product["name"],
+                    "Categoria": product["category"],
+                    "Fornecedor": product["supplier"] or "",
+                    "Estoque": product["stock"] or "",
+                    "Lido em": product["updated_at"] or "",
+                    "URL": product["url"],
+                }
+                for product in products
+            ],
+            column_config={
+                "URL": st.column_config.LinkColumn("Produto", display_text="Abrir no WeDrop")
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
 
 
 def _render_category_details(
@@ -286,7 +330,9 @@ def _render_category_details(
     metric_columns = st.columns(3)
     metric_columns[0].metric("Produtos ativos", row["active_products"])
     metric_columns[1].metric("Produtos inativos", row["inactive_products"])
-    metric_columns[2].metric("Produtos sem status", row["products_without_status"])
+    metric_columns[2].metric(
+        "Produtos sem status", row["products_without_status"], help=WITHOUT_STATUS_HELP
+    )
 
     products = repository.products_for_category_period(row["name"], start_day, end_day)
     if not products:
@@ -461,6 +507,7 @@ def main() -> None:
             restock_label="Reposição do dia" if single_day else "Reposição no período",
         )
 
+        _render_without_status(repository)
         _render_category_strip(categories)
         selected = _selected_category(categories)
         if selected:
