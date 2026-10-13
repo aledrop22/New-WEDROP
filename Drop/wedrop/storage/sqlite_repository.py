@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .fields import PRODUCT_DATA_FIELDS, PRODUCT_FIELDS
+from .product_status import effective_status
 from .stock_events import make_event_records, parse_event_datetime
 
 _SCHEMA = """
@@ -63,15 +64,15 @@ CREATE INDEX IF NOT EXISTS stock_events_product_date_idx
 
 # Situação do produto a partir do texto livre do campo is_active.
 _ACTIVE_SQL = (
-    "(LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%ativo%' "
-    "OR LOWER(TRIM(COALESCE(p.is_active, ''))) IN ('active', 'true', '1', 'sim'))"
+    "(LOWER(TRIM(wedrop_status(p.is_active, p.availability))) LIKE '%ativo%' "
+    "OR LOWER(TRIM(wedrop_status(p.is_active, p.availability))) IN ('active', 'true', '1', 'sim'))"
 )
 _INACTIVE_SQL = (
-    "(LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%inativ%' "
-    "OR LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%desativ%' "
-    "OR LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%inactive%' "
-    "OR LOWER(TRIM(COALESCE(p.is_active, ''))) LIKE '%disabled%' "
-    "OR LOWER(TRIM(COALESCE(p.is_active, ''))) IN ('false', '0', 'não', 'nao'))"
+    "(LOWER(TRIM(wedrop_status(p.is_active, p.availability))) LIKE '%inativ%' "
+    "OR LOWER(TRIM(wedrop_status(p.is_active, p.availability))) LIKE '%desativ%' "
+    "OR LOWER(TRIM(wedrop_status(p.is_active, p.availability))) LIKE '%inactive%' "
+    "OR LOWER(TRIM(wedrop_status(p.is_active, p.availability))) LIKE '%disabled%' "
+    "OR LOWER(TRIM(wedrop_status(p.is_active, p.availability))) IN ('false', '0', 'não', 'nao'))"
 )
 
 
@@ -127,6 +128,7 @@ class SalesRepository:
             Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(str(database_path))
         self.connection.row_factory = sqlite3.Row
+        self.connection.create_function("wedrop_status", 2, effective_status)
         self._create_schema()
 
     @classmethod
@@ -240,10 +242,10 @@ class SalesRepository:
                                        THEN p.product_id END) AS active_products,
                    COUNT(DISTINCT CASE WHEN {_INACTIVE_SQL}
                                        THEN p.product_id END) AS inactive_products,
-                   COUNT(DISTINCT CASE WHEN TRIM(COALESCE(p.is_active, '')) = ''
+                   COUNT(DISTINCT CASE WHEN TRIM(wedrop_status(p.is_active, p.availability)) = ''
                                          OR (NOT {_ACTIVE_SQL}
                                              AND NOT {_INACTIVE_SQL}
-                                             AND LOWER(TRIM(COALESCE(p.is_active, '')))
+                                             AND LOWER(TRIM(wedrop_status(p.is_active, p.availability)))
                                                  NOT LIKE '%active%')
                                        THEN p.product_id END) AS products_without_status
             FROM categories AS c
@@ -264,7 +266,8 @@ class SalesRepository:
         start_at, end_at = _checked_range(start_day, end_day)
         return self._rows(
             """
-            SELECT p.product_id, p.name, p.sku, p.ean, p.url, p.is_active,
+            SELECT p.product_id, p.name, p.sku, p.ean, p.url,
+                   wedrop_status(p.is_active, p.availability) AS is_active,
                    p.price, p.availability, p.stock, p.total_stock_count,
                    p.real_balance, p.supplier, p.cnpj, p.origin_state, p.ncm,
                    p.weight, p.height, p.width, p.length, p.description,
@@ -279,7 +282,8 @@ class SalesRepository:
                   AND e.event_at >= ?
                   AND e.event_at < ?
             WHERE p.category = ?
-            GROUP BY p.product_id, p.name, p.sku, p.ean, p.url, p.is_active,
+            GROUP BY p.product_id, p.name, p.sku, p.ean, p.url,
+                     wedrop_status(p.is_active, p.availability),
                      p.price, p.availability, p.stock, p.total_stock_count,
                      p.real_balance, p.supplier, p.cnpj, p.origin_state, p.ncm,
                      p.weight, p.height, p.width, p.length, p.description,
@@ -394,6 +398,9 @@ class SalesRepository:
             """,
             (start_at, end_at),
         )
+
+    def product_count(self) -> int:
+        return int(self.connection.execute("SELECT COUNT(*) FROM products").fetchone()[0])
 
     def categories(self) -> list[sqlite3.Row]:
         return self._rows(

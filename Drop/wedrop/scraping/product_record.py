@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..names import clean_product_name
+from ..storage.product_status import status_from_availability
 from .parsing import (
     SPEC_LABEL_FIELDS,
     calculate_current_balance,
@@ -156,7 +157,7 @@ def build_product_record(
         "stock": stock,
         "total_stock_count": total_stock,
         "real_balance": real_balance,
-        "is_active": _status(page_text),
+        "is_active": _status(page_text) or status_from_availability(availability),
         "supplier": _label_from_any(page_texts, ("Fornecedor",)),
         "cnpj": _label_from_any(page_texts, ("CNPJ", "CNPJ do fornecedor")),
         "origin_state": _label_from_any(page_texts, ("Estado de origem", "Origem")),

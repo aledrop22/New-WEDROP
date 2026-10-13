@@ -1,13 +1,14 @@
-"""Daily category sales and stock-restock dashboard for the WeDrop catalog."""
+"""Painel de vendas e reposições do catálogo WeDrop."""
 
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
-from datetime import date, timedelta
-from typing import Any
 import unicodedata
+from datetime import date, datetime, timedelta
+from typing import Any
 
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
@@ -48,6 +49,35 @@ APP_SECRETS = (
     "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_KEY",
 )
+SNAPSHOT_TTL_SECONDS = 300
+EMPTY_CATEGORY: dict[str, Any] = {
+    "expected_products": None,
+    "mapped_products": 0,
+    "units_sold": 0,
+    "units_restocked": 0,
+    "active_products": 0,
+    "inactive_products": 0,
+    "products_without_status": 0,
+}
+CARD_STYLE = """
+<style>
+.wd-strip {
+  display: grid; gap: 0.4rem; grid-template-columns: repeat(14, minmax(0, 1fr));
+}
+@media (max-width: 1700px) { .wd-strip { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .wd-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.wd-card {
+  text-align: center; border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 0.5rem;
+  padding: 0.45rem 0.2rem; min-width: 0; line-height: 1.2;
+}
+.wd-card-name {
+  font-size: 0.72rem; font-weight: 600; min-height: 3em; overflow-wrap: anywhere;
+  display: flex; align-items: center; justify-content: center;
+}
+.wd-card-label { font-size: 0.6rem; text-transform: uppercase; opacity: 0.6; margin-top: 0.35rem; }
+.wd-card-value { font-size: 1.05rem; font-weight: 600; white-space: nowrap; }
+</style>
+"""
 
 
 def _load_streamlit_secrets() -> None:
@@ -63,30 +93,32 @@ def _load_streamlit_secrets() -> None:
 _load_streamlit_secrets()
 
 
-SNAPSHOT_TTL_SECONDS = 300
-
-
 @st.cache_data(ttl=SNAPSHOT_TTL_SECONDS, show_spinner="Carregando dados do Supabase...")
-def _supabase_snapshot() -> dict[str, list[dict[str, Any]]]:
+def _supabase_snapshot() -> dict[str, Any]:
     supabase = SupabaseRepository.from_environment()
     try:
-        return supabase.fetch_snapshot()
+        snapshot: dict[str, Any] = supabase.fetch_snapshot()
     finally:
         supabase.close()
+    snapshot["fetched_at"] = datetime.now().strftime("%H:%M:%S")
+    return snapshot
 
 
-def _open_repository() -> SalesRepository:
-    """Fonte dos dados: o Supabase quando não há banco local (ex.: nuvem) ou quando forçado.
+def _open_repository() -> tuple[SalesRepository, str]:
+    """Abre a fonte dos dados e devolve também o texto que a descreve.
 
-    WEDROP_FONTE_PAINEL=supabase força o Supabase; =local força o banco local.
+    Usa o Supabase quando não há banco local (ex.: Streamlit Cloud) ou quando
+    WEDROP_FONTE_PAINEL=supabase. WEDROP_FONTE_PAINEL=local força o banco local.
     """
     forced = os.environ.get("WEDROP_FONTE_PAINEL", "").strip().lower()
     use_supabase = forced == "supabase" or (
         forced != "local" and not DATABASE_FILE.exists() and is_configured()
     )
     if use_supabase:
-        return SalesRepository.from_snapshot(_supabase_snapshot())
-    return SalesRepository(DATABASE_FILE)
+        snapshot = _supabase_snapshot()
+        source = f"Fonte: Supabase (lido às {snapshot['fetched_at']}, atualiza a cada 5 min)"
+        return SalesRepository.from_snapshot(snapshot), source
+    return SalesRepository(DATABASE_FILE), f"Fonte: banco local ({DATABASE_FILE.name})"
 
 
 def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
@@ -95,6 +127,10 @@ def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
         "Produto": [row["name"] for row in rows],
         key: [row["units_sold"] for row in rows],
     }
+
+
+def _format_int(value: int | None) -> str:
+    return "—" if value is None else f"{value:,}".replace(",", ".")
 
 
 def _run_catalog_sync() -> None:
@@ -140,315 +176,296 @@ def _status_bucket(value: str | None) -> str:
     return "Sem status"
 
 
-@st.fragment(run_every="5m", key="catalog-dashboard")
-def main() -> None:
-    st.title("Monitoramento diário WeDrop")
-    st.caption(
-        "Vendas e reposições de estoque por categoria, produto e período selecionado. "
-        "Os dados são atualizados automaticamente a cada 5 minutos."
-    )
+def _category_rows(repository: SalesRepository, start_day: date, end_day: date) -> list[dict[str, Any]]:
+    """Uma linha por categoria do catálogo, mesmo as que ainda não têm movimentação."""
+    activity = {
+        row["name"]: dict(row)
+        for row in repository.category_activity(start_day, end_day)
+    }
+    names = list(CATEGORY_NAMES) + [name for name in activity if name not in CATEGORY_NAMES]
+    return [{"name": name, **EMPTY_CATEGORY, **activity.get(name, {})} for name in names]
 
+
+def _products_total(row: dict[str, Any]) -> int | None:
+    """Produtos da categoria: quantidade no site; se não houver, a quantidade gravada."""
+    if row["expected_products"] is not None:
+        return row["expected_products"]
+    return row["mapped_products"] or None
+
+
+NO_CATEGORY = "Nenhuma (visão geral)"
+
+
+def _selected_category(categories: list[dict[str, Any]]) -> str | None:
+    choice = st.selectbox(
+        "Ver produtos de uma categoria",
+        [NO_CATEGORY, *(row["name"] for row in categories)],
+        key="selected_category_choice",
+    )
+    return None if choice == NO_CATEGORY else choice
+
+
+def _render_period_sidebar() -> tuple[date, date] | None:
+    """Barra lateral: somente o calendário."""
     with st.sidebar:
-        st.header("Filtro de período")
-        selected_period = st.date_input(
+        st.header("Período")
+        selected = st.date_input(
             "Período de análise",
             value=(date.today(), date.today()),
             max_value=date.today(),
             key="activity_period",
         )
-        if not isinstance(selected_period, tuple) or len(selected_period) != 2:
-            st.info("Selecione a data inicial e final para consultar as movimentações.")
-            return
-        start_day, end_day = selected_period
+        if not isinstance(selected, tuple) or len(selected) != 2:
+            st.info("Escolha a data inicial e a final.")
+            return None
+        start_day, end_day = selected
         if start_day > end_day:
             st.error("A data inicial precisa ser anterior ou igual à data final.")
-            return
+            return None
+        return start_day, end_day
 
-        if st.button("Atualizar catálogo e históricos", type="primary"):
-            _run_catalog_sync()
 
-    repository = _open_repository()
+def _render_empty_notice() -> None:
+    if DATABASE_FILE.exists() or is_configured():
+        st.warning(
+            "Ainda não há produtos carregados. Use 'Atualizar catálogo' ou rode a coleta."
+        )
+    else:
+        st.error(
+            "Sem dados: o painel não encontrou credenciais do Supabase nem banco local. "
+            "No Streamlit Cloud, abra App settings > Secrets e configure SUPABASE_URL "
+            "e SUPABASE_SERVICE_ROLE_KEY."
+        )
+
+
+def _render_summary(categories: list[dict[str, Any]], sales_label: str, restock_label: str) -> None:
+    columns = st.columns(6)
+    columns[0].metric("Categorias", len(categories))
+    columns[1].metric(
+        "Itens ativos", _format_int(sum(row["active_products"] for row in categories))
+    )
+    columns[2].metric(
+        "Itens inativos", _format_int(sum(row["inactive_products"] for row in categories))
+    )
+    columns[3].metric(
+        "Sem status", _format_int(sum(row["products_without_status"] for row in categories))
+    )
+    columns[4].metric(sales_label, _format_int(sum(row["units_sold"] for row in categories)))
+    columns[5].metric(
+        restock_label, _format_int(sum(row["units_restocked"] for row in categories))
+    )
+
+
+def _card_html(row: dict[str, Any]) -> str:
+    return (
+        '<div class="wd-card">'
+        f'<div class="wd-card-name">{html.escape(row["name"])}</div>'
+        '<div class="wd-card-label">Produtos</div>'
+        f'<div class="wd-card-value">{_format_int(_products_total(row))}</div>'
+        '<div class="wd-card-label">Vendas</div>'
+        f'<div class="wd-card-value">{_format_int(row["units_sold"])}</div>'
+        "</div>"
+    )
+
+
+def _render_category_strip(categories: list[dict[str, Any]]) -> None:
+    """Todas as categorias numa linha: quantidade de produtos e, abaixo, as vendas."""
+    st.subheader("Categorias")
+    cards = "".join(_card_html(row) for row in categories)
+    st.markdown(f'<div class="wd-strip">{cards}</div>', unsafe_allow_html=True)
+
+
+def _render_category_details(
+    repository: SalesRepository, row: dict[str, Any], start_day: date, end_day: date
+) -> None:
+    st.subheader(row["name"])
+
+    metric_columns = st.columns(3)
+    metric_columns[0].metric("Produtos ativos", row["active_products"])
+    metric_columns[1].metric("Produtos inativos", row["inactive_products"])
+    metric_columns[2].metric("Produtos sem status", row["products_without_status"])
+
+    products = repository.products_for_category_period(row["name"], start_day, end_day)
+    if not products:
+        st.info(
+            "Ainda não há produtos desta categoria no banco. "
+            "Sincronize o catálogo para carregar produtos e status."
+        )
+        return
+
+    status_filter = st.radio(
+        "Filtrar produtos", ("Todos", "Ativos", "Inativos", "Sem status"), horizontal=True
+    )
+    filtered = [
+        (product, _status_bucket(product["is_active"]))
+        for product in products
+        if status_filter == "Todos" or _status_bucket(product["is_active"]) == status_filter
+    ]
+    st.subheader("Produtos da categoria")
+    st.dataframe(
+        [
+            {
+                "Produto": product["name"],
+                "SKU": product["sku"] or "",
+                "Status": status,
+                "Preço": product["price"] or "",
+                "EAN": product["ean"] or "",
+                "Vendido": product["units_sold"],
+                "Reposto": product["units_restocked"],
+                "Estoque": product["stock"] or "",
+                "Estoque total": product["total_stock_count"] or "",
+                "Saldo real": product["real_balance"] or "",
+                "Fornecedor": product["supplier"] or "",
+                "CNPJ": product["cnpj"] or "",
+                "Origem": product["origin_state"] or "",
+                "NCM": product["ncm"] or "",
+                "Peso": product["weight"] or "",
+                "Altura": product["height"] or "",
+                "Largura": product["width"] or "",
+                "Comprimento": product["length"] or "",
+                "Descrição": product["description"] or "",
+                "URL": product["url"],
+            }
+            for product, status in filtered
+        ],
+        column_config={
+            "URL": st.column_config.LinkColumn("Produto", display_text="Abrir no WeDrop")
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    chart_products = [product for product, _ in filtered if product["units_sold"] or product["units_restocked"]]
+    st.subheader("Vendas e reposições por produto")
+    if not chart_products:
+        st.info("Não há produtos neste filtro para o período selecionado.")
+        return
+    product_chart = _chart_rows(chart_products, "Unidades vendidas")
+    product_chart["Unidades repostas"] = [product["units_restocked"] for product in chart_products]
+    st.bar_chart(
+        product_chart,
+        x="Produto",
+        y=["Unidades vendidas", "Unidades repostas"],
+        height=420,
+    )
+
+
+def _render_daily_chart(
+    repository: SalesRepository, start_day: date, end_day: date, selected: str | None
+) -> None:
+    daily = {
+        row["day"]: row
+        for row in repository.category_daily_activity(start_day, end_day, selected)
+    }
+    days = [start_day + timedelta(days=offset) for offset in range((end_day - start_day).days + 1)]
+    empty = {"units_sold": 0, "units_restocked": 0}
+    st.subheader("Movimentações por dia")
+    st.line_chart(
+        {
+            "Data": [day.strftime("%d/%m") for day in days],
+            "Vendas": [daily.get(day.isoformat(), empty)["units_sold"] for day in days],
+            "Reposição": [daily.get(day.isoformat(), empty)["units_restocked"] for day in days],
+        },
+        x="Data",
+        y=["Vendas", "Reposição"],
+        height=320,
+    )
+
+
+def _render_category_chart(categories: list[dict[str, Any]]) -> None:
+    st.subheader("Movimentações por categoria")
+    st.bar_chart(
+        {
+            "Categoria": [row["name"] for row in categories],
+            "Vendas": [row["units_sold"] for row in categories],
+            "Reposição": [row["units_restocked"] for row in categories],
+        },
+        x="Categoria",
+        y=["Vendas", "Reposição"],
+        height=420,
+    )
+
+
+def _render_top_products(repository: SalesRepository, start_day: date, end_day: date) -> None:
+    top_products = repository.top_products_for_period(start_day, end_day)
+    st.subheader("20 produtos mais vendidos no período")
+    if not top_products:
+        st.info("Não houve vendas registradas no período selecionado.")
+        return
+    st.bar_chart(
+        {
+            "Produto": [row["name"] for row in top_products],
+            "Unidades vendidas": [row["units_sold"] for row in top_products],
+        },
+        x="Produto",
+        y="Unidades vendidas",
+        height=420,
+    )
+    st.dataframe(
+        [
+            {
+                "Produto": row["name"],
+                "Categoria": row["category"],
+                "SKU": row["sku"] or "",
+                "Unidades vendidas": row["units_sold"],
+                "URL": row["url"],
+            }
+            for row in top_products
+        ],
+        column_config={
+            "URL": st.column_config.LinkColumn("Produto", display_text="Abrir no WeDrop")
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
+@st.fragment(run_every="5m", key="catalog-dashboard")
+def main() -> None:
+    st.markdown(CARD_STYLE, unsafe_allow_html=True)
+    period = _render_period_sidebar()
+
+    title_col, action_col = st.columns([5, 1], vertical_alignment="center")
+    title_col.title("Monitoramento diário WeDrop")
+    if action_col.button("Atualizar catálogo", type="primary", use_container_width=True):
+        _run_catalog_sync()
+
+    if period is None:
+        st.info("Escolha a data inicial e a final no calendário ao lado.")
+        return
+    start_day, end_day = period
+
     try:
-        stored_categories = repository.category_activity(start_day, end_day)
-        activity_by_name = {row["name"]: row for row in stored_categories}
-        category_names = list(CATEGORY_NAMES)
-        category_names.extend(
-            name for name in activity_by_name if name not in category_names
+        repository, source = _open_repository()
+    except Exception as exc:
+        st.error(f"Não foi possível ler os dados: {exc}")
+        return
+
+    try:
+        st.caption(
+            f"Período analisado: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y} · {source}"
         )
-        selected_category = st.session_state.get("selected_category")
-        if selected_category not in category_names:
-            selected_category = None
-            st.session_state.pop("selected_category", None)
+        if repository.product_count() == 0:
+            _render_empty_notice()
 
-        sales_label = "Vendas no dia" if start_day == end_day else "Vendas no período"
-        restock_label = (
-            "Reposição no dia" if start_day == end_day else "Reposição no período"
-        )
-
-        categories = [
-            activity_by_name.get(
-                name,
-                {
-                    "name": name,
-                    "units_sold": 0,
-                    "units_restocked": 0,
-                    "active_products": 0,
-                    "inactive_products": 0,
-                    "products_without_status": 0,
-                    "mapped_products": 0,
-                    "expected_products": None,
-                },
-            )
-            for name in category_names
-        ]
-        with st.sidebar:
-            st.divider()
-            st.subheader("Categorias do catálogo")
-            st.caption(
-                f"Período: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}. "
-                "Selecione uma categoria para ver os produtos."
-            )
-            if st.button(
-                "Visão geral",
-                key="show_all_categories",
-                type="secondary",
-                use_container_width=True,
-            ):
-                st.session_state.pop("selected_category", None)
-                selected_category = None
-
-            for index, category_name in enumerate(category_names):
-                values = activity_by_name.get(category_name)
-                if values is None:
-                    values = {
-                        "expected_products": None,
-                        "mapped_products": 0,
-                        "units_sold": 0,
-                        "units_restocked": 0,
-                        "active_products": 0,
-                        "inactive_products": 0,
-                    }
-                with st.container(border=True):
-                    st.markdown(f"**{category_name}**")
-                    expected = values["expected_products"]
-                    st.caption(
-                        "Produtos no site: "
-                        + (
-                            f"{expected:,}".replace(",", ".")
-                            if expected is not None
-                            else "—"
-                        )
-                    )
-                    st.caption(
-                        f"{sales_label}: **{values['units_sold']}**  \n"
-                        f"{restock_label}: **{values['units_restocked']}**"
-                    )
-                    st.caption(
-                        f"Ativos: {values['active_products']} · "
-                        f"Inativos: {values['inactive_products']}"
-                    )
-                    if values["inactive_products"]:
-                        st.error(
-                            f"⚠️ {values['inactive_products']} produto(s) inativo(s)"
-                        )
-                    if st.button(
-                        "Abrir produtos",
-                        key=f"open_category_{index}",
-                        type=(
-                            "primary"
-                            if category_name == selected_category
-                            else "secondary"
-                        ),
-                        use_container_width=True,
-                    ):
-                        st.session_state["selected_category"] = category_name
-                        selected_category = category_name
-                        st.rerun()
-
-        st.caption(f"Período analisado: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y}")
-        total_sales = sum(row["units_sold"] for row in categories)
-        total_restocked = sum(row["units_restocked"] for row in categories)
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Categorias", len(categories))
-        col2.metric("Unidades vendidas", total_sales)
-        col3.metric("Unidades repostas", total_restocked)
-
-        daily_activity = repository.category_daily_activity(
-            start_day, end_day, selected_category
-        )
-        daily_by_date = {row["day"]: row for row in daily_activity}
-        chart_dates = [
-            start_day + timedelta(days=offset)
-            for offset in range((end_day - start_day).days + 1)
-        ]
-        st.subheader("Movimentações por dia")
-        st.line_chart(
-            {
-                "Data": [day.strftime("%d/%m") for day in chart_dates],
-                "Vendas": [
-                    daily_by_date.get(day.isoformat(), {"units_sold": 0})[
-                        "units_sold"
-                    ]
-                    for day in chart_dates
-                ],
-                "Reposição": [
-                    daily_by_date.get(day.isoformat(), {"units_restocked": 0})[
-                        "units_restocked"
-                    ]
-                    for day in chart_dates
-                ],
-            },
-            x="Data",
-            y=["Vendas", "Reposição"],
-            height=320,
+        categories = _category_rows(repository, start_day, end_day)
+        single_day = start_day == end_day
+        _render_summary(
+            categories,
+            sales_label="Vendas do dia" if single_day else "Vendas no período",
+            restock_label="Reposição do dia" if single_day else "Reposição no período",
         )
 
-        if selected_category:
-            if st.button("Fechar detalhes da categoria"):
-                st.session_state.pop("selected_category", None)
-                st.rerun()
-            selected_row = next(
-                row for row in categories if row["name"] == selected_category
-            )
-            st.subheader(selected_category)
-            category_col1, category_col2, category_col3 = st.columns(3)
-            category_col1.metric("Produtos ativos", selected_row["active_products"])
-            category_col2.metric("Produtos inativos", selected_row["inactive_products"])
-            category_col3.metric(
-                "Produtos sem status", selected_row["products_without_status"]
-            )
+        _render_category_strip(categories)
+        selected = _selected_category(categories)
+        if selected:
+            selected_row = next(row for row in categories if row["name"] == selected)
+            _render_category_details(repository, selected_row, start_day, end_day)
 
-            products = repository.products_for_category_period(
-                selected_category, start_day, end_day
-            )
-            if products:
-                status_filter = st.radio(
-                    "Filtrar produtos",
-                    ("Todos", "Ativos", "Inativos", "Sem status"),
-                    horizontal=True,
-                )
-                classified_products = [
-                    (product, _status_bucket(product["is_active"]))
-                    for product in products
-                ]
-                filtered_products = [
-                    (product, status)
-                    for product, status in classified_products
-                    if status_filter == "Todos" or status == status_filter
-                ]
-                st.subheader("Produtos da categoria")
-                st.dataframe(
-                    [
-                        {
-                            "Produto": product["name"],
-                            "SKU": product["sku"] or "",
-                            "Status": status,
-                            "Preço": product["price"] or "",
-                            "EAN": product["ean"] or "",
-                            "Vendido": product["units_sold"],
-                            "Reposto": product["units_restocked"],
-                            "Estoque": product["stock"] or "",
-                            "Estoque total": product["total_stock_count"] or "",
-                            "Saldo real": product["real_balance"] or "",
-                            "Fornecedor": product["supplier"] or "",
-                            "CNPJ": product["cnpj"] or "",
-                            "Origem": product["origin_state"] or "",
-                            "NCM": product["ncm"] or "",
-                            "Peso": product["weight"] or "",
-                            "Altura": product["height"] or "",
-                            "Largura": product["width"] or "",
-                            "Comprimento": product["length"] or "",
-                            "Descrição": product["description"] or "",
-                            "URL": product["url"],
-                        }
-                        for product, status in filtered_products
-                    ],
-                    column_config={
-                        "URL": st.column_config.LinkColumn(
-                            "Produto", display_text="Abrir no WeDrop"
-                        )
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                )
-                chart_products = [
-                    product
-                    for product, _ in filtered_products
-                    if product["units_sold"] or product["units_restocked"]
-                ]
-                product_chart = _chart_rows(
-                    chart_products,
-                    "Unidades vendidas",
-                )
-                product_chart["Unidades repostas"] = [
-                    product["units_restocked"]
-                    for product in chart_products
-                ]
-                st.subheader("Vendas e reposições por produto")
-                if chart_products:
-                    st.bar_chart(
-                        product_chart,
-                        x="Produto",
-                        y=["Unidades vendidas", "Unidades repostas"],
-                        height=420,
-                    )
-                else:
-                    st.info("Não há produtos neste filtro para o período selecionado.")
-            else:
-                st.info(
-                    "Ainda não há produtos desta categoria no banco. "
-                    "Sincronize o catálogo para carregar produtos e status."
-                )
-
-        st.subheader("Movimentações por categoria")
-        st.bar_chart(
-            {
-                "Categoria": [row["name"] for row in categories],
-                "Vendas": [row["units_sold"] for row in categories],
-                "Reposição": [row["units_restocked"] for row in categories],
-            },
-            x="Categoria",
-            y=["Vendas", "Reposição"],
-            height=420,
-        )
-
-        if not selected_category:
-
-            top_products = repository.top_products_for_period(start_day, end_day)
-            st.subheader("20 produtos mais vendidos no período")
-            if top_products:
-                st.bar_chart(
-                    {
-                        "Produto": [row["name"] for row in top_products],
-                        "Unidades vendidas": [
-                            row["units_sold"] for row in top_products
-                        ],
-                    },
-                    x="Produto",
-                    y="Unidades vendidas",
-                    height=420,
-                )
-                st.dataframe(
-                    [
-                        {
-                            "Produto": row["name"],
-                            "Categoria": row["category"],
-                            "SKU": row["sku"] or "",
-                            "Unidades vendidas": row["units_sold"],
-                            "URL": row["url"],
-                        }
-                        for row in top_products
-                    ],
-                    column_config={
-                        "URL": st.column_config.LinkColumn(
-                            "Produto", display_text="Abrir no WeDrop"
-                        )
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                )
-            else:
-                st.info("Não houve vendas registradas no período selecionado.")
+        _render_daily_chart(repository, start_day, end_day, selected)
+        _render_category_chart(categories)
+        if not selected:
+            _render_top_products(repository, start_day, end_day)
     finally:
         repository.close()
 
