@@ -34,7 +34,7 @@ class ReadDecisionTests(unittest.TestCase):
 
     def test_missing_products_in_products_file_are_read_in_full(self):
         reason = _full_read_reason(COZINHA, {"Cozinha": 1276}, 1200)
-        self.assertEqual(reason, "o data.json tem 1200 de 1276 produtos")
+        self.assertEqual(reason, "o data.json tem 1200 de 1276 produtos disponíveis")
 
     def test_unchanged_category_needs_only_price_and_balance(self):
         self.assertIsNone(_full_read_reason(COZINHA, {"Cozinha": 1276}, 1276))
@@ -155,6 +155,9 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
                     {"product_id": "1", "category": "Cozinha", "price": "10", "url": "https://x/catalog/1", "stock_history": []},
                     {"product_id": "2", "category": "Cozinha", "price": "20", "url": "https://x/catalog/2", "stock_history": []},
                     {"product_id": "3", "category": "Casa", "price": "30", "url": "https://x/catalog/3", "stock_history": []},
+                    # Já esgotado em coleta anterior: não deve ser relido enquanto estiver fora da listagem.
+                    {"product_id": "4", "category": "Cozinha", "price": "40", "url": "https://x/catalog/4",
+                     "availability": "Indisponível", "is_active": "Inativo", "stock_history": []},
                 )
             )
             + "\n",
@@ -215,8 +218,17 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(listed[1].known_record)  # novo: leitura completa
         self.assertEqual([(job.product_id, job.known_record) for job in gone], [("2", None)])
         stored_ids = sorted(record["product_id"] for record in self.products_json.by_category()["Cozinha"])
-        self.assertEqual(stored_ids, ["1", "2"])
+        self.assertEqual(stored_ids, ["1", "2", "4"])
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 2})
+
+    async def test_sold_out_product_back_in_listing_is_compared_again(self):
+        listing = {"1": "https://x/catalog/1", "2": "https://x/catalog/2", "4": "https://x/catalog/4"}
+        _, crawler = await self._refresh(count=3, baseline=2, listing=listing)
+
+        listed, gone = crawler.calls
+        self.assertEqual([job.product_id for job in listed], ["1", "2", "4"])
+        self.assertIsNotNone(listed[2].known_record)
+        self.assertEqual(gone, [])
 
     async def test_sold_out_product_that_fails_to_open_does_not_block_the_category(self):
         listing = {"1": "https://x/catalog/1"}

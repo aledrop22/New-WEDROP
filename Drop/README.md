@@ -31,8 +31,9 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
   - Saldo mudou: lê a aba **Histórico de Estoque** e grava as movimentações novas (vendas e entradas), que aparecem no painel.
 - **Quantidade diferente**, categoria nunca coletada ou `data.json` com menos produtos que o site: percorre a **listagem inteira** da categoria para saber o que entrou e o que saiu.
   - Aumentou: produto novo (na listagem e ainda não salvo) é lido por inteiro.
-  - Diminuiu: produto que saiu da listagem acabou o estoque. A página dele é lida por inteiro (últimas vendas no histórico e selo Indisponível), e ele continua salvo.
+  - Diminuiu: produto que acabou de sair da listagem esgotou. A página dele é lida por inteiro uma vez (últimas vendas no histórico e selo Indisponível), e ele continua salvo.
   - Produto que continua na listagem: mesma comparação de preço e saldo com o dia anterior.
+- Produto já esgotado (Indisponível) não é relido. Quando volta a ter saldo, volta à listagem, a quantidade da categoria sobe e ele é atualizado.
 - Se uma leitura de preço e saldo falhar, a categoria inteira é lida.
 
 A coleta manual (`coletar`) continua completa.

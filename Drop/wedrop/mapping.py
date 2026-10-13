@@ -38,6 +38,7 @@ from .scraping.catalog import Category, filter_categories, list_categories, read
 from .scraping.product_page import ProductJob, ProductReader
 from .scraping.session import SessionExpiredError, ensure_authenticated
 from .storage import products_file
+from .storage.product_status import INACTIVE, effective_status
 from .storage.run_state import COMPLETED, IN_PROGRESS, load_run_state, save_run_state
 from .storage.sqlite_repository import SalesRepository
 from .storage.supabase_repository import SupabaseRepository
@@ -492,13 +493,19 @@ async def _refresh_category(
     captured_at: str,
     summary: MappingSummary,
 ) -> None:
-    reason = _full_read_reason(category, baselines, len(known))
+    # Esgotados (Indisponível) não são relidos: quando voltarem a ter saldo, voltam à
+    # listagem, a quantidade da categoria sobe e eles são lidos de novo.
+    available = [record for record in known if not _is_sold_out(record)]
+    reason = _full_read_reason(category, baselines, len(available))
     if reason is None:
-        log_progress(f"{label}: {category.count} produtos, sem alteração; comparando preço e saldo de {len(known)} com o dia anterior.")
-        failures = await crawler.crawl([_balance_job(record, category) for record in known])
+        log_progress(
+            f"{label}: {category.count} produtos, sem alteração; comparando preço e saldo de "
+            f"{len(available)} com o dia anterior ({len(known) - len(available)} esgotados ignorados)."
+        )
+        failures = await crawler.crawl([_balance_job(record, category) for record in available])
         if not failures:
             summary.balance_only_categories.append(category.name)
-            _save_category(repository, supabase, category, len(known), captured_at)
+            _save_category(repository, supabase, category, len(available), captured_at)
             return
         reason = f"{len(failures)} produto(s) não lidos só em preço e saldo"
 
@@ -513,12 +520,17 @@ async def _refresh_category(
         for product_id, url in links.items()
     ]
     new_count = sum(1 for product_id in links if product_id not in known_by_id)
-    # Produto que saiu da listagem acabou o estoque: a página dele mostra as últimas
-    # vendas no histórico e o selo Indisponível. Continua salvo e é lido por inteiro.
-    gone = [record for product_id, record in known_by_id.items() if product_id not in links]
+    # Produto que acabou de sair da listagem esgotou: a página dele mostra as últimas
+    # vendas no histórico e o selo Indisponível. Continua salvo e é lido por inteiro uma
+    # vez; quem já estava esgotado não é relido. Esgotado que voltou à listagem é comparado.
+    gone = [
+        record
+        for product_id, record in known_by_id.items()
+        if product_id not in links and not _is_sold_out(record)
+    ]
     log_progress(
         f"Categoria {category.name}: {len(links)} listados ({new_count} novos); "
-        f"{len(gone)} saíram da listagem e serão lidos por inteiro."
+        f"{len(gone)} acabaram de sair da listagem e serão lidos por inteiro."
     )
     failures = await crawler.crawl(listed_jobs)
     summary.failed_ids.extend(job.product_id for job, _ in failures)
@@ -544,8 +556,12 @@ def _full_read_reason(category: Category, baselines: dict[str, int | None], stor
     if previous != category.count:
         return f"quantidade mudou de {previous} para {category.count}"
     if stored_count < category.count:
-        return f"o data.json tem {stored_count} de {category.count} produtos"
+        return f"o data.json tem {stored_count} de {category.count} produtos disponíveis"
     return None
+
+
+def _is_sold_out(record: dict) -> bool:
+    return effective_status(record.get("is_active"), record.get("availability")) == INACTIVE
 
 
 def _balance_job(record: dict, category: Category) -> ProductJob:
