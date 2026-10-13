@@ -216,11 +216,8 @@ def _prepare_products_file(paths: DataPaths, options: MappingOptions, state) -> 
         products_file.write_records_atomic(paths.products_file, [])
         log_progress("Coleta anterior concluída: data.json será reescrito do zero.")
     elif not options.is_partial:
-        restored = products_file.restore_missing_from_backups(
-            paths.products_file, paths.backup_dir, exclude=backup
-        )
-        if restored:
-            log_progress(f"{restored} produtos recuperados dos backups recentes.")
+        # Não restaura produtos de backups: um backup antigo traz dados de dias
+        # anteriores e faria produtos parecerem coletados hoje sem nova leitura.
         log_progress("Coleta anterior incompleta: retomando sem repetir produtos já salvos.")
     return resuming
 
@@ -234,17 +231,18 @@ async def run_mapping(
     log_progress("Iniciando coleta completa do catálogo WeDrop.")
     log_progress(f"Destino JSON: {paths.products_file}")
 
+    supabase = None
+    if not options.local_only:
+        supabase = SupabaseRepository.from_environment()
+        supabase.validate()
+        log_progress("Conexão e tabelas Supabase validadas.")
+
     state = None if options.is_partial else load_run_state(paths.state_file)
     resuming = _prepare_products_file(paths, options, state)
     summary = MappingSummary(resumed=resuming, partial=options.is_partial)
     if not options.is_partial:
         save_run_state(paths.state_file, IN_PROGRESS, saved_total=len(products_file.read_product_ids(paths.products_file)))
 
-    supabase = None
-    if not options.local_only:
-        supabase = SupabaseRepository.from_environment()
-        supabase.validate()
-        log_progress("Conexão e tabelas Supabase validadas.")
     repository = SalesRepository(paths.database_file)
     captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
     sink = _BatchSink(paths, repository, supabase, captured_at)

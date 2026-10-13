@@ -445,8 +445,10 @@ def main() -> None:
         return
 
     try:
+        credentials = "encontradas" if is_configured() else "NÃO encontradas (configure os Secrets)"
         st.caption(
-            f"Período analisado: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y} · {source}"
+            f"Período analisado: {start_day:%d/%m/%Y} a {end_day:%d/%m/%Y} · {source} · "
+            f"Credenciais do Supabase: {credentials}"
         )
         if repository.product_count() == 0:
             _render_empty_notice()
