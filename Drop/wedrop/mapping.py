@@ -227,6 +227,12 @@ class _ProductCrawler:
             if product is None:  # preço e saldo iguais ao dia anterior: nada a gravar
                 self._unchanged += 1
                 continue
+            product = {
+                **product,
+                # Mesma hora e contagem do terminal ([222/241]), para analisar o data.json.
+                "lido_em": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "leitura_categoria": f"{self._done}/{self._total}",
+            }
             self._report(product)
             self._sink.add(product)
 

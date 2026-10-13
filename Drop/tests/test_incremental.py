@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from wedrop.mapping import MappingSummary, _full_read_reason, _ProductsJsonFile, _refresh_category
+from wedrop.mapping import MappingSummary, _full_read_reason, _ProductCrawler, _ProductsJsonFile, _refresh_category
 from wedrop.scraping.catalog import Category
 from wedrop.scraping.product_page import ProductJob
 from wedrop.scraping.product_record import (
@@ -258,6 +258,30 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.full_categories, ["Cozinha"])
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 1})
         self.assertFalse(summary.is_complete)
+
+
+class CrawlerRecordTests(unittest.IsolatedAsyncioTestCase):
+    async def test_each_saved_product_has_read_time_and_position_in_category(self):
+        class Reader:
+            async def read(self, job):
+                return None if job.product_id == "2" else {"product_id": job.product_id}
+
+        class Sink:
+            def __init__(self):
+                self.saved = []
+
+            def add(self, product):
+                self.saved.append(product)
+
+            def flush(self):
+                pass
+
+        sink = Sink()
+        jobs = [ProductJob(str(number), f"https://x/catalog/{number}", "Cozinha") for number in (1, 2, 3)]
+        await _ProductCrawler([Reader()], sink, relogin=None).crawl(jobs)
+
+        self.assertEqual([product["leitura_categoria"] for product in sink.saved], ["1/3", "3/3"])
+        self.assertRegex(sink.saved[0]["lido_em"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
 
 
 class BaselineTests(unittest.TestCase):
