@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     manual.add_argument("--workers", type=_positive_int, default=DEFAULT_WORKERS, help="Páginas em paralelo.")
     manual.add_argument("--pasta-dados", type=Path, help="Grava em outra pasta (testes).")
 
-    daily = commands.add_parser("diaria", help="Coleta diária com novas tentativas (agendador).")
+    daily = commands.add_parser("diaria", help="Coleta diária incremental com novas tentativas (agendador).")
     daily.add_argument("--tentativas", type=_positive_int, default=DEFAULT_ATTEMPTS)
     daily.add_argument("--pausa", type=_positive_int, default=DEFAULT_PAUSE_SECONDS, help="Segundos entre tentativas.")
     daily.add_argument("--pasta-dados", type=Path, help="Grava em outra pasta (testes).")

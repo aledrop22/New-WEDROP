@@ -16,7 +16,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from ..logs import log_progress
 from ..config import PRODUCT_READ_ATTEMPTS
-from .product_record import PageSnapshot, build_product_record
+from .product_record import PageSnapshot, build_balance_update, build_product_record
 from .session import SessionExpiredError
 
 READY_SELECTOR = (
@@ -124,11 +124,15 @@ class ProductNotLoadedError(RuntimeError):
 
 @dataclass(frozen=True)
 class ProductJob:
-    """Um produto a ser lido: ID, endereço e categoria."""
+    """Um produto a ser lido: ID, endereço e categoria.
+
+    Com `known_record` (registro já guardado), só preço e saldo são lidos; o resto vem dele.
+    """
 
     product_id: str
     url: str
     category_name: str
+    known_record: dict[str, Any] | None = None
 
 
 def _context_destroyed(exc: Exception) -> bool:
@@ -171,6 +175,8 @@ class ProductReader:
             raise SessionExpiredError()
         if not _has_name_or_price(initial):
             raise ProductNotLoadedError(job.product_id)
+        if job.known_record is not None:
+            return await self._read_balance(job, initial)
 
         body_after_stock = None
         if await _activate_tab(page, STOCK_TAB_NAME):
@@ -199,6 +205,23 @@ class ProductReader:
             body_text_after_stock_tab=body_after_stock,
         )
         return build_product_record(job.product_id, job.url, job.category_name, snapshot)
+
+    async def _read_balance(self, job: ProductJob, initial: dict[str, Any]) -> dict[str, Any]:
+        """Só preço e saldo: a aba de estoque é lida; histórico, CNPJ e demais campos não."""
+        body_after_stock = None
+        if await _activate_tab(self._page, STOCK_TAB_NAME):
+            body_after_stock = await self._page.evaluate("() => document.body.innerText")
+        stock_candidates = await self._page.evaluate(_STOCK_TEXT_JS, list(_STOCK_SELECTORS))
+        snapshot = PageSnapshot(
+            title=initial["title"],
+            body_text=initial["bodyText"],
+            price_candidates=tuple(initial["priceCandidates"]),
+            alt_price_candidates=tuple(initial["altPriceCandidates"]),
+            availability_candidates=(initial["availabilityBadge"], *initial["availabilityCandidates"]),
+            stock_candidates=tuple(stock_candidates),
+            body_text_after_stock_tab=body_after_stock,
+        )
+        return {**job.known_record, **build_balance_update(job.known_record, snapshot)}
 
     async def _loaded_snapshot(self) -> dict[str, Any]:
         """Espera o nome ou o preço aparecerem e lê o DOM; páginas lentas ainda estão em esqueleto."""
@@ -234,6 +257,11 @@ def _initial_selectors() -> dict[str, Any]:
         "description": '[role="tabpanel"]',
     }
 
+
+_STOCK_TEXT_JS = """(selectors) => selectors.map((selector) => {
+  const element = document.querySelector(selector);
+  return element ? element.innerText.trim() : "";
+})"""
 
 _PANEL_VISIBLE_JS = """(tab) => {
   const panel = document.getElementById(tab.getAttribute("aria-controls") || "");

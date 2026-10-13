@@ -411,6 +411,10 @@ class SalesRepository:
             """
         )
 
+    def category_baselines(self) -> dict[str, int | None]:
+        """Quantidade de produtos informada pelo site em cada categoria na última coleta."""
+        return {row["name"]: row["expected_products"] for row in self.categories()}
+
     def _rows(self, sql: str, params: tuple | list = ()) -> list[sqlite3.Row]:
         return list(self.connection.execute(sql, params))
 

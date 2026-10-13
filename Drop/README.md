@@ -7,7 +7,7 @@
 | Coleta manual (retoma se a anterior foi interrompida) | `coletar.bat` ou `python -m wedrop coletar` |
 | Só algumas categorias | `python -m wedrop coletar --categoria Cozinha` |
 | Painel de vendas e estoque | `painel.bat` |
-| Coleta diária (agendador do Windows) | `python -m wedrop diaria` |
+| Coleta diária incremental (agendador do Windows) | `python -m wedrop diaria` |
 | Preencher preços que faltam no data.json | `python -m ferramentas.corrigir_precos` |
 
 Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
@@ -20,6 +20,17 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
 - Produto que abre sem nome e sem preço não é gravado: é relido e, se continuar vazio, fica para a próxima execução.
 - Backups antigos são comprimidos (`.json.gz`), nunca apagados.
 - Coleta parcial (`--categoria` ou `--limite`) só acrescenta dados e não muda o estado da coleta completa.
+
+## Coleta diária incremental
+
+`python -m wedrop diaria` não percorre o site inteiro. Antes de ler produtos, compara a quantidade de cada categoria (mostrada na página de categorias) com a última coleta, guardada na tabela `categories` do SQLite:
+
+- **Quantidade igual** e todos os produtos da categoria já no `data.json`: lê só **preço e saldo** de cada produto. O restante já está salvo, e a listagem da categoria não é percorrida.
+- **Quantidade diferente**, categoria nunca coletada ou `data.json` com menos produtos que o site: lê a **categoria inteira** (listagem completa e todos os campos).
+- Se uma leitura de preço e saldo falhar, a categoria inteira é lida.
+- Produto que saiu da categoria é retirado do `data.json` quando a categoria é lida inteira.
+
+Limite: uma categoria com quantidade igual não tem o histórico de movimentações relido. Vendas que não mudam a quantidade só entram no painel quando a categoria for lida inteira. A coleta manual (`coletar`) continua completa.
 
 ## Estrutura
 

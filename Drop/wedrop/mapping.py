@@ -6,6 +6,10 @@ Regras de execução:
 - Coleta interrompida (erro ou queda): retoma sem apagar nada, sem repetir o
   que já está salvo, e completa o que faltou em relação ao site.
 - Coleta parcial (--categoria ou --limite): só acrescenta dados e não altera o estado.
+
+Coleta diária incremental (run_incremental): compara a quantidade de cada categoria
+com a última coleta. Igual: lê só preço e saldo dos produtos guardados. Diferente
+(ou sem histórico): lê a categoria inteira.
 """
 
 from __future__ import annotations
@@ -81,10 +85,69 @@ class MappingSummary:
     partial: bool = False
     shortfall_categories: list[str] = field(default_factory=list)
     failed_ids: list[str] = field(default_factory=list)
+    balance_only_categories: list[str] = field(default_factory=list)
+    full_categories: list[str] = field(default_factory=list)
 
     @property
     def is_complete(self) -> bool:
         return not self.partial and not self.shortfall_categories and not self.failed_ids
+
+
+class _ProductsJsonFile:
+    """data.json da coleta diária. Um produto relido substitui o registro antigo.
+
+    A coleta completa só acrescenta linhas. Aqui o arquivo inteiro é reescrito de
+    forma atômica ao fim de cada categoria, porque os registros são trocados.
+    """
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._records: list[products_file.Record] = products_file.read_records(path)
+        self._position: dict[str, int] = {}
+        self._index()
+
+    def _index(self) -> None:
+        self._position = {
+            str(record["product_id"]): index
+            for index, record in enumerate(self._records)
+            if isinstance(record, dict) and record.get("product_id")
+        }
+
+    def by_category(self) -> dict[str, list[dict]]:
+        grouped: dict[str, list[dict]] = {}
+        for index in self._position.values():
+            record = self._records[index]
+            grouped.setdefault(str(record.get("category", "")), []).append(record)
+        return grouped
+
+    def upsert(self, records: list[dict]) -> None:
+        for record in records:
+            product_id = str(record["product_id"])
+            index = self._position.get(product_id)
+            if index is None:
+                self._position[product_id] = len(self._records)
+                self._records.append(record)
+            else:
+                self._records[index] = record
+
+    def remove_missing(self, category_name: str, listed_ids: set[str]) -> list[str]:
+        """Tira os produtos da categoria que deixaram de aparecer na listagem completa."""
+        missing = {
+            product_id
+            for product_id, index in self._position.items()
+            if self._records[index].get("category") == category_name and product_id not in listed_ids
+        }
+        if missing:
+            self._records = [
+                record
+                for record in self._records
+                if not (isinstance(record, dict) and str(record.get("product_id", "")) in missing)
+            ]
+            self._index()
+        return sorted(missing)
+
+    def save(self) -> None:
+        products_file.write_records_atomic(self._path, self._records)
 
 
 class _BatchSink:
@@ -96,11 +159,13 @@ class _BatchSink:
         repository: SalesRepository,
         supabase: SupabaseRepository | None,
         captured_at: str,
+        products_json: _ProductsJsonFile | None = None,
     ):
         self._paths = paths
         self._repository = repository
         self._supabase = supabase
         self._captured_at = captured_at
+        self._products_json = products_json
         self._batch: list[dict] = []
 
     def add(self, product: dict) -> None:
@@ -113,10 +178,11 @@ class _BatchSink:
             return
         batch, self._batch = self._batch, []
         self._repository.save_products(batch, self._captured_at)
-        products_file.append_records(
-            self._paths.products_file,
-            [products_file.file_record(product, self._captured_at) for product in batch],
-        )
+        file_records = [products_file.file_record(product, self._captured_at) for product in batch]
+        if self._products_json is None:
+            products_file.append_records(self._paths.products_file, file_records)
+        else:
+            self._products_json.upsert(file_records)
         if self._supabase is not None:
             self._supabase.save_products(batch, self._captured_at)
         destinations = "SQLite e data.json" + ("" if self._supabase is None else " e Supabase")
@@ -326,3 +392,167 @@ def _finish(paths: DataPaths, summary: MappingSummary) -> None:
     if summary.failed_ids:
         log_progress(f"Produtos com erro, retomados na próxima execução: {summary.failed_ids[:20]}")
     log_progress("Mapeamento concluído." if summary.is_complete else "Mapeamento incompleto; execute novamente para retomar.")
+
+
+async def run_incremental(
+    options: MappingOptions = MappingOptions(),
+    paths: DataPaths = DataPaths(),
+) -> MappingSummary:
+    """Coleta diária: lê só o que pode ter mudado desde a última coleta.
+
+    Quantidade igual à da última coleta e produtos já guardados: lê só preço e saldo.
+    Quantidade diferente, categoria nova ou produtos faltando no data.json: lê a
+    categoria inteira. Falha numa leitura rápida também leva à categoria inteira.
+    """
+    load_environment()
+    configure_progress_logging()
+    log_progress("Iniciando coleta diária incremental do catálogo WeDrop.")
+    log_progress(f"Destino JSON: {paths.products_file}")
+
+    supabase = None
+    if not options.local_only:
+        supabase = SupabaseRepository.from_environment()
+        supabase.validate()
+        log_progress("Conexão e tabelas Supabase validadas.")
+
+    backup = products_file.backup_products_file(paths.products_file, paths.backup_dir)
+    if backup is not None:
+        log_progress(f"Backup de segurança criado: {backup.name}")
+    products_file.compress_old_backups(paths.backup_dir)
+
+    repository = SalesRepository(paths.database_file)
+    captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    products_json = _ProductsJsonFile(paths.products_file)
+    sink = _BatchSink(paths, repository, supabase, captured_at, products_json)
+    summary = MappingSummary()
+    try:
+        async with async_playwright() as playwright:
+            browser, context = await open_browser(playwright)
+            try:
+                await _refresh_catalog(context, options, products_json, sink, repository, supabase, captured_at, summary)
+            finally:
+                await browser.close()
+    finally:
+        sink.flush()
+        products_json.save()
+        repository.close()
+        if supabase is not None:
+            supabase.close()
+
+    log_progress(
+        f"Resumo: {len(summary.balance_only_categories)} categoria(s) só com preço e saldo; "
+        f"{len(summary.full_categories)} lida(s) por inteiro."
+    )
+    _finish(paths, summary)
+    return summary
+
+
+async def _refresh_catalog(
+    context: BrowserContext,
+    options: MappingOptions,
+    products_json: _ProductsJsonFile,
+    sink: _BatchSink,
+    repository: SalesRepository,
+    supabase: SupabaseRepository | None,
+    captured_at: str,
+    summary: MappingSummary,
+) -> None:
+    pages = [await context.new_page() for _ in range(max(1, options.workers))]
+    listing_page = pages[0]
+
+    async def relogin() -> None:
+        await ensure_authenticated(listing_page, context, ask_user=options.ask_for_credentials)
+
+    await relogin()
+    categories = await list_categories(listing_page)
+    summary.categories = len(categories)
+    summary.site_total = sum(category.count or 0 for category in categories)
+    log_progress(f"Categorias no site: {len(categories)}; o site informa {summary.site_total} produtos.")
+
+    baselines = repository.category_baselines()
+    stored = products_json.by_category()
+    crawler = _ProductCrawler([ProductReader(page) for page in pages], sink, relogin)
+    for index, category in enumerate(categories, 1):
+        await _refresh_category(
+            f"[{index}/{len(categories)}] {category.name}",
+            category,
+            baselines,
+            stored.get(category.name, []),
+            listing_page,
+            crawler,
+            products_json,
+            repository,
+            supabase,
+            captured_at,
+            summary,
+        )
+        sink.flush()
+        products_json.save()
+
+
+async def _refresh_category(
+    label: str,
+    category: Category,
+    baselines: dict[str, int | None],
+    known: list[dict],
+    listing_page: Page,
+    crawler: _ProductCrawler,
+    products_json: _ProductsJsonFile,
+    repository: SalesRepository,
+    supabase: SupabaseRepository | None,
+    captured_at: str,
+    summary: MappingSummary,
+) -> None:
+    reason = _full_read_reason(category, baselines, len(known))
+    if reason is None:
+        log_progress(f"{label}: {category.count} produtos, sem alteração; lendo só preço e saldo de {len(known)}.")
+        failures = await crawler.crawl([_balance_job(record, category) for record in known])
+        if not failures:
+            summary.balance_only_categories.append(category.name)
+            _save_category(repository, supabase, category, len(known), captured_at)
+            return
+        reason = f"{len(failures)} produto(s) não lidos só em preço e saldo"
+
+    log_progress(f"{label}: categoria inteira ({reason}).")
+    summary.full_categories.append(category.name)
+    links = await _read_listing(listing_page, category, summary)
+    log_progress(f"Categoria {category.name}: {len(links)} listados, todos lidos.")
+    failures = await crawler.crawl([ProductJob(product_id, url, category.name) for product_id, url in links.items()])
+    summary.failed_ids.extend(job.product_id for job, _ in failures)
+    if failures or category.name in summary.shortfall_categories:
+        log_progress(f"Categoria {category.name} não ficou completa; a próxima execução a lê de novo.")
+        return
+    removed = products_json.remove_missing(category.name, set(links))
+    if removed:
+        log_progress(f"{len(removed)} produto(s) saíram de {category.name} e foram retirados do data.json.")
+    _save_category(repository, supabase, category, len(links), captured_at)
+
+
+def _full_read_reason(category: Category, baselines: dict[str, int | None], stored_count: int) -> str | None:
+    """Motivo para ler a categoria inteira; None quando basta ler preço e saldo."""
+    if category.count is None:
+        return "o site não informou a quantidade de produtos"
+    if category.name not in baselines:
+        return "categoria ainda não coletada"
+    previous = baselines[category.name]
+    if previous != category.count:
+        return f"quantidade mudou de {previous} para {category.count}"
+    if stored_count < category.count:
+        return f"o data.json tem {stored_count} de {category.count} produtos"
+    return None
+
+
+def _balance_job(record: dict, category: Category) -> ProductJob:
+    return ProductJob(str(record["product_id"]), str(record.get("url", "")), category.name, record)
+
+
+def _save_category(
+    repository: SalesRepository,
+    supabase: SupabaseRepository | None,
+    category: Category,
+    mapped_products: int,
+    captured_at: str,
+) -> None:
+    repository.save_category(_as_dict(category), mapped_products, captured_at)
+    if supabase is not None:
+        supabase.save_category(_as_dict(category), mapped_products, captured_at)

@@ -121,6 +121,21 @@ def _stock_values(
     return stock, real_balance, total_stock
 
 
+def build_balance_update(known: dict[str, Any], snapshot: PageSnapshot) -> dict[str, str]:
+    """Preço e saldo lidos agora. O saldo calculado usa o histórico já guardado no registro."""
+    page_text = snapshot.body_text_after_stock_tab or snapshot.body_text
+    availability = first_non_empty(snapshot.availability_candidates)
+    calculated = calculate_current_balance(known.get("stock_history", []))
+    stock, real_balance, total_stock = _stock_values(snapshot, page_text, availability, calculated)
+    price = _price(snapshot, snapshot.body_text) or value_for_label(page_text, ("Preço",))
+    return {
+        "price": price or known.get("price", ""),
+        "stock": stock,
+        "real_balance": real_balance,
+        "total_stock_count": total_stock,
+    }
+
+
 def build_product_record(
     product_id: str, url: str, category_name: str, snapshot: PageSnapshot
 ) -> dict[str, Any]:
