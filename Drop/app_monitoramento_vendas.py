@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import html
-import logging
 import os
 import unicodedata
 from datetime import date, datetime, timedelta
@@ -14,7 +12,6 @@ import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from wedrop.config import DATABASE_FILE, load_environment
-from wedrop.mapping import MappingOptions, run_mapping
 from wedrop.storage.sqlite_repository import SalesRepository
 from wedrop.storage.supabase_repository import SupabaseRepository, is_configured
 
@@ -115,15 +112,26 @@ def _supabase_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def _local_has_products() -> bool:
+    """Banco local vazio (ex.: criado no servidor por uma coleta que falhou) não conta."""
+    if not DATABASE_FILE.exists():
+        return False
+    repository = SalesRepository(DATABASE_FILE)
+    try:
+        return repository.product_count() > 0
+    finally:
+        repository.close()
+
+
 def _open_repository() -> tuple[SalesRepository, str]:
     """Abre a fonte dos dados e devolve também o texto que a descreve.
 
-    Usa o Supabase quando não há banco local (ex.: Streamlit Cloud) ou quando
-    WEDROP_FONTE_PAINEL=supabase. WEDROP_FONTE_PAINEL=local força o banco local.
+    Usa o Supabase quando não há banco local com produtos (ex.: Streamlit Cloud) ou
+    quando WEDROP_FONTE_PAINEL=supabase. WEDROP_FONTE_PAINEL=local força o banco local.
     """
     forced = os.environ.get("WEDROP_FONTE_PAINEL", "").strip().lower()
     use_supabase = forced == "supabase" or (
-        forced != "local" and not DATABASE_FILE.exists() and is_configured()
+        forced != "local" and not _local_has_products() and is_configured()
     )
     if use_supabase:
         snapshot = _supabase_snapshot()
@@ -150,34 +158,6 @@ def _bar_chart_height(bars: int) -> int:
 
 def _format_int(value: int | None) -> str:
     return "—" if value is None else f"{value:,}".replace(",", ".")
-
-
-def _run_catalog_sync() -> None:
-    try:
-        with st.spinner("Atualizando categorias, vendas e reposições..."):
-            summary = asyncio.run(run_mapping(MappingOptions(ask_for_credentials=False)))
-        st.cache_data.clear()
-        if summary.is_complete:
-            st.success("Catálogo atualizado e sincronizado.")
-        else:
-            st.warning(
-                "Coleta incompleta: execute novamente para retomar de onde parou "
-                f"({summary.saved_total} de {summary.site_total} produtos salvos)."
-            )
-    except Exception as exc:
-        logging.getLogger("wedrop.scraper").exception(
-            "Falha ao atualizar catálogo pelo Streamlit."
-        )
-        message = str(exc)
-        if message.startswith("Supabase não configurado"):
-            st.error(
-                "A coleta não iniciou porque o Streamlit Cloud não recebeu as "
-                "credenciais do Supabase. Abra App settings > Secrets e configure "
-                "SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY. Configure também "
-                "WEDROP_EMAIL e WEDROP_PASSWORD para o login no catálogo."
-            )
-        else:
-            st.error(f"Falha na coleta: {message}")
 
 
 def _status_bucket(value: str | None) -> str:
@@ -247,7 +227,7 @@ def _render_period_sidebar() -> tuple[date, date] | None:
 def _render_empty_notice() -> None:
     if is_configured():
         st.warning(
-            "Ainda não há produtos carregados. Use 'Atualizar catálogo' ou rode a coleta."
+            "Ainda não há produtos carregados. Os dados chegam com a coleta diária."
         )
     else:
         st.error(
@@ -533,10 +513,7 @@ def main() -> None:
     st.markdown(CARD_STYLE, unsafe_allow_html=True)
     period = _render_period_sidebar()
 
-    title_col, action_col = st.columns([5, 1], vertical_alignment="center")
-    title_col.title("Monitoramento diário WeDrop")
-    if action_col.button("Atualizar catálogo", type="primary", use_container_width=True):
-        _run_catalog_sync()
+    st.title("Monitoramento diário WeDrop")
 
     if period is None:
         st.info("Escolha a data inicial e a final no calendário ao lado.")
