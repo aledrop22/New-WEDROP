@@ -118,7 +118,10 @@ def _open_repository() -> tuple[SalesRepository, str]:
         snapshot = _supabase_snapshot()
         source = f"Fonte: Supabase (lido às {snapshot['fetched_at']}, atualiza a cada 5 min)"
         return SalesRepository.from_snapshot(snapshot), source
-    return SalesRepository(DATABASE_FILE), f"Fonte: banco local ({DATABASE_FILE.name})"
+    if DATABASE_FILE.exists():
+        return SalesRepository(DATABASE_FILE), f"Fonte: banco local ({DATABASE_FILE.name})"
+    # Sem Supabase nem banco local (ex.: Cloud sem Secrets): não cria arquivo vazio.
+    return SalesRepository(":memory:"), "Fonte: nenhuma (sem Supabase configurado)"
 
 
 def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
@@ -226,7 +229,7 @@ def _render_period_sidebar() -> tuple[date, date] | None:
 
 
 def _render_empty_notice() -> None:
-    if DATABASE_FILE.exists() or is_configured():
+    if is_configured():
         st.warning(
             "Ainda não há produtos carregados. Use 'Atualizar catálogo' ou rode a coleta."
         )
