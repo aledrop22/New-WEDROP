@@ -51,6 +51,7 @@ APP_SECRETS = (
 )
 SNAPSHOT_TTL_SECONDS = 300
 TOP_CATEGORIES = 5
+TOP_DAILY_PRODUCTS = 100
 WITHOUT_STATUS_HELP = (
     "Produto salvo sem o selo Disponível/Indisponível: a página foi lida antes do "
     "cabeçalho (nome, preço e selo) carregar. A próxima coleta relê esses produtos por inteiro."
@@ -140,6 +141,11 @@ def _chart_rows(rows: list[Any], key: str) -> dict[str, list[Any]]:
         "Produto": [row["name"] for row in rows],
         key: [row["units_sold"] for row in rows],
     }
+
+
+def _bar_chart_height(bars: int) -> int:
+    """Altura de um gráfico de barras horizontais: uma faixa legível por barra."""
+    return max(200, 26 * bars + 80)
 
 
 def _format_int(value: int | None) -> str:
@@ -384,18 +390,24 @@ def _render_category_details(
         use_container_width=True,
     )
 
-    chart_products = [product for product, _ in filtered if product["units_sold"] or product["units_restocked"]]
+    chart_products = sorted(
+        (product for product, _ in filtered if product["units_sold"] or product["units_restocked"]),
+        key=lambda product: (-product["units_sold"], -product["units_restocked"]),
+    )
     st.subheader("Vendas e reposições por produto")
     if not chart_products:
-        st.info("Não há produtos neste filtro para o período selecionado.")
+        st.info("Nenhum produto deste filtro teve movimentação no período selecionado.")
         return
+    st.caption(f"{_format_int(len(chart_products))} produtos com movimentação no período.")
     product_chart = _chart_rows(chart_products, "Unidades vendidas")
     product_chart["Unidades repostas"] = [product["units_restocked"] for product in chart_products]
     st.bar_chart(
         product_chart,
         x="Produto",
         y=["Unidades vendidas", "Unidades repostas"],
-        height=420,
+        horizontal=True,
+        sort=False,
+        height=_bar_chart_height(len(chart_products)),
     )
 
 
@@ -419,19 +431,66 @@ def _render_daily_chart(
         y=["Vendas", "Reposição"],
         height=320,
     )
+    _render_top_products_daily(repository, start_day, end_day, selected)
+
+
+def _render_top_products_daily(
+    repository: SalesRepository, start_day: date, end_day: date, selected: str | None
+) -> None:
+    rows = repository.top_products_daily_activity(start_day, end_day, selected, TOP_DAILY_PRODUCTS)
+    st.subheader(f"{TOP_DAILY_PRODUCTS} produtos com mais movimentação: volume por dia")
+    if not rows:
+        st.info("Nenhum produto teve movimentação no período selecionado.")
+        return
+    days = sorted({row["day"] for row in rows})
+    table: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        entry = table.setdefault(
+            row["product_id"],
+            {
+                "Produto": row["name"],
+                "Categoria": row["category"],
+                "Vendido": row["total_sold"],
+                "Reposto": row["total_restocked"],
+                **{date.fromisoformat(day).strftime("%d/%m"): 0 for day in days},
+                "URL": row["url"],
+            },
+        )
+        entry[date.fromisoformat(row["day"]).strftime("%d/%m")] = row["units_sold"]
+    st.caption(
+        "Colunas por dia mostram as unidades vendidas naquele dia; "
+        "Vendido e Reposto somam o período."
+    )
+    st.dataframe(
+        list(table.values()),
+        column_config={
+            "URL": st.column_config.LinkColumn("Produto", display_text="Abrir no WeDrop")
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
 
 
 def _render_category_chart(categories: list[dict[str, Any]]) -> None:
+    moved = sorted(
+        (row for row in categories if row["units_sold"] or row["units_restocked"]),
+        key=lambda row: (-row["units_sold"], -row["units_restocked"]),
+    )
     st.subheader("Movimentações por categoria")
+    if not moved:
+        st.info("Nenhuma categoria teve movimentação no período selecionado.")
+        return
     st.bar_chart(
         {
-            "Categoria": [row["name"] for row in categories],
-            "Vendas": [row["units_sold"] for row in categories],
-            "Reposição": [row["units_restocked"] for row in categories],
+            "Categoria": [row["name"] for row in moved],
+            "Vendas": [row["units_sold"] for row in moved],
+            "Reposição": [row["units_restocked"] for row in moved],
         },
         x="Categoria",
         y=["Vendas", "Reposição"],
-        height=420,
+        horizontal=True,
+        sort=False,
+        height=_bar_chart_height(len(moved)),
     )
 
 

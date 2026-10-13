@@ -353,6 +353,56 @@ class SalesRepository:
             params,
         )
 
+    def top_products_daily_activity(
+        self,
+        start_day: date,
+        end_day: date,
+        category_name: str | None = None,
+        limit: int = 100,
+    ) -> list[sqlite3.Row]:
+        """Vendas e reposições por dia dos produtos que mais movimentaram no período."""
+        start_at, end_at = _checked_range(start_day, end_day)
+        params: list[Any] = [start_at, end_at]
+        category_filter = ""
+        if category_name is not None:
+            category_filter = "AND p.category = ?"
+            params.append(category_name)
+        params.append(limit)
+        return self._rows(
+            f"""
+            WITH moves AS (
+                SELECT e.product_id, substr(e.event_at, 1, 10) AS day,
+                       SUM(CASE WHEN e.event_kind = 'sale'
+                                THEN e.quantity ELSE 0 END) AS units_sold,
+                       SUM(CASE WHEN e.event_kind = 'stock_in'
+                                THEN e.quantity ELSE 0 END) AS units_restocked
+                FROM stock_events AS e
+                JOIN products AS p ON p.product_id = e.product_id
+                WHERE e.event_at >= ? AND e.event_at < ?
+                  AND e.event_kind IN ('sale', 'stock_in')
+                  {category_filter}
+                GROUP BY e.product_id, substr(e.event_at, 1, 10)
+            ),
+            ranked AS (
+                SELECT product_id, SUM(units_sold) AS total_sold,
+                       SUM(units_restocked) AS total_restocked
+                FROM moves
+                GROUP BY product_id
+                HAVING SUM(units_sold) + SUM(units_restocked) > 0
+                ORDER BY total_sold DESC, total_restocked DESC
+                LIMIT ?
+            )
+            SELECT p.product_id, p.name, p.category, p.url, m.day,
+                   m.units_sold, m.units_restocked, r.total_sold, r.total_restocked
+            FROM ranked AS r
+            JOIN moves AS m ON m.product_id = r.product_id
+            JOIN products AS p ON p.product_id = r.product_id
+            ORDER BY r.total_sold DESC, r.total_restocked DESC,
+                     p.name COLLATE NOCASE, m.day
+            """,
+            params,
+        )
+
     def top_products_for_period(self, start_day: date, end_day: date) -> list[sqlite3.Row]:
         start_at, end_at = _checked_range(start_day, end_day)
         return self._rows(

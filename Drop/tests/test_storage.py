@@ -193,6 +193,11 @@ class StorageTests(unittest.TestCase):
             [(row["day"], row["units_sold"], row["units_restocked"]) for row in daily],
             [("2026-10-10", 2, 0), ("2026-10-11", 4, 5), ("2026-10-12", 3, 0)],
         )
+        top_daily = repository.top_products_daily_activity(
+            date(2026, 10, 10), date(2026, 10, 12), "Categoria A", limit=1
+        )
+        self.assertEqual({row["name"] for row in top_daily}, {"Produto A1"})
+        self.assertEqual(sum(row["units_sold"] for row in top_daily), 5)
         self.assertEqual(
             repository.top_products_for_period(
                 date(2026, 10, 10), date(2026, 10, 12)
