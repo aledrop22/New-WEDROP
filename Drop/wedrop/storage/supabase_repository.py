@@ -10,7 +10,7 @@ from typing import Any
 import requests
 
 from ..config import load_environment
-from .fields import PRODUCT_DATA_FIELDS
+from .fields import NULLABLE_TIMESTAMP_FIELDS, PRICE_ALERT_FIELD, PRODUCT_DATA_FIELDS
 from .stock_events import make_event_records
 
 CHUNK_SIZE = 200
@@ -30,6 +30,14 @@ REQUIRED_TABLES = {
 }
 
 _logger = logging.getLogger("wedrop.scraper")
+
+
+def _column_value(product: dict[str, Any], field: str) -> Any:
+    """Valor da coluna; data vazia vai como NULL, porque o Supabase não aceita texto vazio em timestamptz."""
+    value = product.get(field, "")
+    if field in NULLABLE_TIMESTAMP_FIELDS and not value:
+        return None
+    return value
 
 
 def is_configured() -> bool:
@@ -84,7 +92,7 @@ class SupabaseRepository:
         return cls(url, api_key)
 
     def validate(self) -> None:
-        """Falha antes da coleta se alguma tabela necessária não existir."""
+        """Falha antes da coleta se alguma tabela ou coluna necessária não existir."""
         for table, key in REQUIRED_TABLES.items():
             response = self.session.get(
                 f"{self.base_url}/{table}",
@@ -98,6 +106,17 @@ class SupabaseRepository:
                     "Confirme SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY e execute "
                     "supabase_schema.sql no SQL Editor do projeto."
                 )
+        response = self.session.get(
+            f"{self.base_url}/wedrop_products",
+            params={"select": PRICE_ALERT_FIELD, "limit": "0"},
+            timeout=self.timeout,
+        )
+        if not response.ok:
+            raise RuntimeError(
+                f"A coluna {PRICE_ALERT_FIELD} não existe em wedrop_products "
+                f"(HTTP {response.status_code}). Execute no SQL Editor do Supabase o "
+                "comando 'alter table' do arquivo supabase_schema.sql antes de coletar."
+            )
 
     def save_category(self, category: dict[str, Any], mapped_products: int, captured_at: str) -> None:
         self._upsert(
@@ -116,7 +135,7 @@ class SupabaseRepository:
 
     def save_products(self, products: list[dict[str, Any]], captured_at: str) -> None:
         product_rows = [
-            {field: product.get(field, "") for field in PRODUCT_DATA_FIELDS} | {"updated_at": captured_at}
+            {field: _column_value(product, field) for field in PRODUCT_DATA_FIELDS} | {"updated_at": captured_at}
             for product in products
         ]
         events_by_id = {

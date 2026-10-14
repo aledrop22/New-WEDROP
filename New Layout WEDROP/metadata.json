@@ -1,0 +1,6 @@
+{
+  "name": "WeDrop Monitoramento",
+  "description": "Painel de vendas e reposições do catálogo WeDrop com histórico de movimentações, categorias e análise de estoque.",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

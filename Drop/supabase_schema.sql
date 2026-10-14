@@ -29,8 +29,12 @@ create table if not exists public.wedrop_products (
     length text,
     description text,
     number_sales text,
-    updated_at timestamptz not null
+    updated_at timestamptz not null,
+    price_changed_at timestamptz
 );
+
+-- Em bancos já criados, rode só este comando no SQL Editor (a coleta exige a coluna).
+alter table public.wedrop_products add column if not exists price_changed_at timestamptz;
 
 create table if not exists public.wedrop_stock_events (
     event_id text primary key,

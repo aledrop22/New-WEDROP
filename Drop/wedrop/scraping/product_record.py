@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..names import clean_product_name
+from ..storage.fields import PRICE_ALERT_FIELD
 from ..storage.product_status import status_from_availability
 from .parsing import (
     SPEC_LABEL_FIELDS,
@@ -152,10 +153,27 @@ def compare_balance(known: dict[str, Any], update: dict[str, str]) -> str:
 
 def fill_from_known(record: dict[str, Any], known: dict[str, Any]) -> dict[str, Any]:
     """Campos que a releitura deixou vazios (ex.: CNPJ que demorou a carregar) mantêm o valor anterior."""
-    return {
+    filled = {
         field: known[field] if value in ("", None) and known.get(field) else value
         for field, value in record.items()
     }
+    # A releitura não traz a data do último alerta de preço: ela continua a da coleta anterior.
+    if known.get(PRICE_ALERT_FIELD):
+        filled.setdefault(PRICE_ALERT_FIELD, known[PRICE_ALERT_FIELD])
+    return filled
+
+
+def with_price_alert(record: dict[str, Any], known: dict[str, Any] | None, changed_at: str) -> dict[str, Any]:
+    """Marca `changed_at` quando o preço é diferente do registro anterior.
+
+    Não guarda o preço antigo, só a data do alerta. Preço que antes estava vazio não
+    conta como alteração: é o primeiro preço lido.
+    """
+    if known is None or not record.get("price") or not known.get("price"):
+        return record
+    if str(record["price"]) == str(known["price"]):
+        return record
+    return {**record, PRICE_ALERT_FIELD: changed_at}
 
 
 def build_product_record(

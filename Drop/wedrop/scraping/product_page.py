@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from playwright.async_api import Page
@@ -24,6 +25,7 @@ from .product_record import (
     build_product_record,
     compare_balance,
     fill_from_known,
+    with_price_alert,
 )
 from .session import SessionExpiredError
 
@@ -150,6 +152,11 @@ class ProductJob:
     known_record: dict[str, Any] | None = None
 
 
+def _now() -> str:
+    """Mesmo formato de data/hora usado nas outras gravações (com fuso local)."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
 def _context_destroyed(exc: Exception) -> bool:
     return "Execution context was destroyed" in str(exc)
 
@@ -203,7 +210,7 @@ class ProductReader:
                 return None
             if change == PRICE_CHANGED:
                 log_progress(f"  Preço mudou (ID {job.product_id}): {known.get('price')} → {update['price']}.")
-                return {**known, "price": update["price"]}
+                return with_price_alert({**known, "price": update["price"]}, known, _now())
             log_progress(
                 f"  Saldo mudou (ID {job.product_id}): {known.get('stock')} → {update['stock']}; lendo o histórico."
             )
@@ -232,7 +239,9 @@ class ProductReader:
             body_text_after_stock_tab=body_after_stock,
         )
         record = build_product_record(job.product_id, job.url, job.category_name, snapshot)
-        return record if known is None else fill_from_known(record, known)
+        if known is None:
+            return record
+        return with_price_alert(fill_from_known(record, known), known, _now())
 
     async def _balance_update(
         self, known: dict[str, Any], initial: dict[str, Any], body_after_stock: str | None

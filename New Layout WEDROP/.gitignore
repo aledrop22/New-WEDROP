@@ -1,0 +1,11 @@
+# Dependências e build geradas localmente
+node_modules/
+dist/
+
+# Variáveis de ambiente com segredos (o .env.example é versionado)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log

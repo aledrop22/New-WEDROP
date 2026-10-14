@@ -319,7 +319,8 @@ class StorageTests(unittest.TestCase):
             repository.session, "get", return_value=successful_response
         ) as get:
             repository.validate()
-        self.assertEqual(get.call_count, 3)
+        # três tabelas e a coluna price_changed_at de wedrop_products
+        self.assertEqual(get.call_count, 4)
 
         failed_response = Mock(spec=requests.Response)
         failed_response.ok = False
