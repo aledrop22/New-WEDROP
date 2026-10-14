@@ -41,7 +41,7 @@ Consulte `.env.example`. NÃ£o use prefixo `VITE_` nessas chaves.
 ## Publicar na Vercel
 
 1. Em **Add New â†’ Project**, importe o repositÃ³rio.
-2. Em **Root Directory**, selecione `New Layout WEDROP` (a pasta que tem este README).
+2. Em **Root Directory**, selecione `wedrop-painel` (a pasta que tem este README).
 3. Framework: **Vite**. Build: `npm run build`. Output: `dist`.
 4. Configure as duas variÃ¡veis acima e faÃ§a o deploy.
 
@@ -60,4 +60,5 @@ Consulte `supabase_schema.sql`:
 - `wedrop_categories`
 - `wedrop_products`
 - `wedrop_stock_events`
+
 

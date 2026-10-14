@@ -3,7 +3,7 @@
 Este repositório tem duas partes:
 
 - `Drop/`: coletor do catálogo WeDrop (Python), que grava no Supabase e roda à meia-noite.
-- `New Layout WEDROP/`: painel React publicado na Vercel. Na Vercel, o *Root Directory* é `New Layout WEDROP`.
+- `wedrop-painel/`: painel React publicado na Vercel. Na Vercel, o *Root Directory* é `wedrop-painel`.
 
 Mapeamento do catálogo WeDrop por categoria, com histórico de vendas e estoque.
 
@@ -41,5 +41,6 @@ streamlit run app_monitoramento_vendas.py
 ```
 
 No sidebar, selecione o período e uma categoria para ver vendas, reposições, produtos movimentados e gráficos. A visão geral apresenta o comparativo por categoria e os 20 produtos mais vendidos no período. Consulte [Drop/WEDROP_CATALOG_README.md](Drop/WEDROP_CATALOG_README.md) para detalhes.
+
 
 
