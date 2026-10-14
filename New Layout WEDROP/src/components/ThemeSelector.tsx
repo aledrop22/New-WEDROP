@@ -1,0 +1,168 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { Sun, Moon, Palette, Check } from 'lucide-react';
+import { ThemeId } from '../types/wedrop';
+import { THEME_OPTIONS } from '../utils/status';
+
+interface ThemeSelectorProps {
+  currentTheme: ThemeId;
+  onSelectTheme: (themeId: ThemeId) => void;
+}
+
+export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
+  currentTheme,
+  onSelectTheme,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const activeThemeObj = THEME_OPTIONS.find((t) => t.id === currentTheme) || THEME_OPTIONS[0];
+  const isDarkMode = activeThemeObj.mode === 'dark';
+
+  // Toggle between dark and light by switching to the primary theme of the other mode
+  const handleToggleMode = () => {
+    if (isDarkMode) {
+      onSelectTheme('light-wedrop');
+    } else {
+      onSelectTheme('dark-onyx');
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const lightThemes = THEME_OPTIONS.filter((t) => t.mode === 'light');
+  const darkThemes = THEME_OPTIONS.filter((t) => t.mode === 'dark');
+
+  return (
+    <div className="flex items-center gap-1 sm:gap-2 relative" ref={dropdownRef}>
+      {/* Quick Mode Toggle Switch (Chavinha Claro / Escuro) */}
+      <button
+        type="button"
+        onClick={handleToggleMode}
+        className={`relative inline-flex h-8 w-14 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+          isDarkMode ? 'bg-slate-700 hover:bg-slate-600' : 'bg-slate-200 hover:bg-slate-300'
+        }`}
+        title={isDarkMode ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro / Black'}
+        aria-label="Alternar tema claro/escuro"
+      >
+        <span className="sr-only">Alternar tema</span>
+        <span
+          className={`pointer-events-none flex h-7 w-7 transform items-center justify-center rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+            isDarkMode ? 'translate-x-6 bg-slate-900 text-amber-400' : 'translate-x-0 text-amber-500'
+          }`}
+        >
+          {isDarkMode ? <Moon className="w-3.5 h-3.5 fill-current" /> : <Sun className="w-3.5 h-3.5 fill-current" />}
+        </span>
+      </button>
+
+      {/* Palette Dropdown Trigger (3 Claros / 3 Escuros) */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer bg-card border-theme text-theme hover:bg-hover"
+        title="Escolher entre os 6 temas visuais (3 claros e 3 escuros)"
+      >
+        <Palette className="w-3.5 h-3.5 text-accent" />
+        <span className="hidden md:inline">{activeThemeObj.name.split(' (')[0]}</span>
+      </button>
+
+      {/* Theme Picker Dropdown Menu */}
+      {isOpen && (
+        <div className="absolute right-0 top-full mt-2 w-72 rounded-xl shadow-2xl border z-50 p-3 bg-card border-theme text-theme">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-muted mb-2 px-1">
+            Escolha de Tema (6 Modelos)
+          </div>
+
+          {/* Section: 3 Temas Claros */}
+          <div className="mb-3">
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5 flex items-center gap-1 px-1">
+              <Sun className="w-3 h-3 text-amber-500" />
+              <span>3 Modelos Claros</span>
+            </div>
+            <div className="space-y-1">
+              {lightThemes.map((theme) => {
+                const isSelected = theme.id === currentTheme;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectTheme(theme.id);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-xs text-left transition-colors ${
+                      isSelected
+                        ? 'bg-red-50 text-red-900 font-semibold ring-1 ring-red-400'
+                        : 'hover:bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-3.5 h-3.5 rounded-full border border-black/10 shrink-0"
+                        style={{ backgroundColor: theme.primaryColor }}
+                      />
+                      <div>
+                        <div className="leading-tight">{theme.name}</div>
+                        <div className="text-[10px] text-slate-500 font-normal">{theme.description}</div>
+                      </div>
+                    </div>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-red-600 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <hr className="border-slate-200 dark:border-slate-700 my-2" />
+
+          {/* Section: 3 Temas Escuros / Pretos */}
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5 flex items-center gap-1 px-1">
+              <Moon className="w-3 h-3 text-cyan-400" />
+              <span>3 Modelos Escuros / Black</span>
+            </div>
+            <div className="space-y-1">
+              {darkThemes.map((theme) => {
+                const isSelected = theme.id === currentTheme;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectTheme(theme.id);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-xs text-left transition-colors ${
+                      isSelected
+                        ? 'bg-slate-800 text-white font-semibold ring-1 ring-cyan-500'
+                        : 'hover:bg-slate-800/60 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0"
+                        style={{ backgroundColor: theme.primaryColor }}
+                      />
+                      <div>
+                        <div className="leading-tight">{theme.name}</div>
+                        <div className="text-[10px] text-slate-400 font-normal">{theme.description}</div>
+                      </div>
+                    </div>
+                    {isSelected && <Check className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

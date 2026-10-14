@@ -1,0 +1,36 @@
+# Arquivos de Ambiente Python
+# (Ignora as pastas com milhares de bibliotecas)
+venv/
+.venv/
+Python311/
+Python313/
+Python314/
+Python315/
+/Scripts/
+/Lib/
+
+# Arquivos de Resultado do Robô
+# (Ignora os dados gerados)
+*.json
+*.db
+*.xlsx
+
+# Cookies e Credenciais (SEGURANÇA)
+# (NUNCA envie seus logins para o GitHub)
+*.txt
+.env
+.env.*
+!.env.example
+credicial_client_secret.json
+storage_state.json
+
+# Cache e logs do Python e Scrapy
+__pycache__/
+.scrapy/
+*.log
+
+# Arquivos do VS Code
+.vscode/
+# Dados da coleta (data.json, banco, backups) e logs
+dados/
+logs/
