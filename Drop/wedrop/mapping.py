@@ -502,7 +502,9 @@ async def _refresh_category(
     # Esgotados (Indisponível) não são relidos: quando voltarem a ter saldo, voltam à
     # listagem, a quantidade da categoria sobe e eles são lidos de novo.
     available = [record for record in known if not _is_sold_out(record)]
-    reason = _full_read_reason(category, baselines, len(available))
+    # Compara com todos os produtos guardados (esgotados inclusive): a quantidade do site
+    # também conta os esgotados. Comparar só os disponíveis forçava leitura completa todo dia.
+    reason = _full_read_reason(category, baselines, len(known))
     if reason is None:
         log_progress(
             f"{label}: {category.count} produtos, sem alteração; comparando preço e saldo de "
