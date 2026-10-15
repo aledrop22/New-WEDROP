@@ -6,6 +6,16 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  // As classes de tema são montadas em tempo de execução (theme-${id}); sem isso o Tailwind
+  // apaga as regras CSS delas e todos os temas caem no tema claro padrão.
+  safelist: [
+    'theme-light-wedrop',
+    'theme-light-emerald',
+    'theme-light-amber',
+    'theme-dark-onyx',
+    'theme-dark-black',
+    'theme-dark-midnight',
+  ],
   theme: {
     extend: {
       colors: {

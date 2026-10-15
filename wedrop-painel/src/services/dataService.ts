@@ -111,6 +111,10 @@ class DataService {
         throw new Error(body?.error || `HTTP ${response.status}`);
       }
       const snapshot = body as SnapshotResponse;
+      if (!snapshot || !Array.isArray(snapshot.categories) || !Array.isArray(snapshot.products)) {
+        // Ex.: rodando só o Vite, sem a função /api/snapshot, a resposta é a página HTML
+        throw new Error('a função /api/snapshot não respondeu com os dados (verifique o deploy da Vercel)');
+      }
       this.categories = snapshot.categories;
       this.products = snapshot.products;
       this.stockEvents = snapshot.stock_events.flatMap((evt) => {
