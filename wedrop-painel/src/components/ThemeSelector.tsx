@@ -105,8 +105,8 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
                     }}
                     className={`w-full flex items-center justify-between p-2 rounded-lg text-xs text-left transition-colors ${
                       isSelected
-                        ? 'bg-red-50 text-red-900 font-semibold ring-1 ring-red-400'
-                        : 'hover:bg-slate-100 text-slate-700'
+                        ? 'bg-card-secondary text-theme font-semibold ring-1 ring-accent'
+                        : 'hover-bg text-theme'
                     }`}
                   >
                     <div className="flex items-center gap-2">
@@ -116,10 +116,10 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
                       />
                       <div>
                         <div className="leading-tight">{theme.name}</div>
-                        <div className="text-[10px] text-slate-500 font-normal">{theme.description}</div>
+                        <div className="text-[10px] text-muted font-normal">{theme.description}</div>
                       </div>
                     </div>
-                    {isSelected && <Check className="w-3.5 h-3.5 text-red-600 shrink-0" />}
+                    {isSelected && <Check className="w-3.5 h-3.5 text-accent shrink-0" />}
                   </button>
                 );
               })}

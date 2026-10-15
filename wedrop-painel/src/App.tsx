@@ -38,6 +38,8 @@ export function App() {
     localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
     const mode = THEME_OPTIONS.find((theme) => theme.id === currentTheme)?.mode;
     if (mode) localStorage.setItem(LAST_THEME_KEYS[mode], currentTheme);
+    // Classe "dark" para as variantes dark: do Tailwind seguirem o tema escolhido
+    document.documentElement.classList.toggle('dark', mode === 'dark');
   }, [currentTheme]);
 
   // Apply the accent on body: the theme classes set the variables on body, so an inline style there wins
