@@ -116,7 +116,7 @@ export const CategoryStrip: React.FC<CategoryStripProps> = ({
                       className="wd-card-rank shadow-xs"
                       style={{ backgroundColor: medal.color, color: medal.text }}
                     >
-                      {position}º {position === 1 ? '🥇 Líder' : position === 2 ? '🥈 2º' : '🥉 3º'}
+                      {position === 1 ? `${position}º 🥇 Líder` : position === 2 ? '🥈 2º' : '🥉 3º'}
                     </span>
                   </div>
                 ) : isTop5 ? (
