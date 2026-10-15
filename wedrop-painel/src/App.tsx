@@ -12,23 +12,46 @@ import { PriceFluctuationView } from './components/PriceFluctuationView';
 import { SettingsModal } from './components/SettingsModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { dataService } from './services/dataService';
-import { ProductRecord, ThemeId, DashboardViewMode, DataSourceConfig } from './types/wedrop';
-import { getLocalDateString, formatDateBR } from './utils/status';
+import { ProductRecord, ThemeId, AccentId, DashboardViewMode, DataSourceConfig } from './types/wedrop';
+import { getLocalDateString, formatDateBR, ACCENT_OPTIONS, THEME_OPTIONS, LAST_THEME_KEYS } from './utils/status';
 
-const THEME_STORAGE_KEY = 'wedrop_theme_id';
+// Versão 2: quem abriu o painel antes continua com o padrão novo (tema preto), não com o antigo salvo.
+const THEME_STORAGE_KEY = 'wedrop_theme_id_v2';
+const ACCENT_STORAGE_KEY = 'wedrop_accent_id';
 
 export function App() {
-  // Theme state: defaults to light-wedrop or saved theme
+  // Theme state: defaults to the True Black theme or the saved one
   const [currentTheme, setCurrentTheme] = useState<ThemeId>(() => {
     const saved = localStorage.getItem(THEME_STORAGE_KEY) as ThemeId | null;
-    return saved || 'light-wedrop';
+    return saved || 'dark-black';
+  });
+
+  // Accent color chosen by the user (overrides the theme's accent when not 'tema')
+  const [currentAccent, setCurrentAccent] = useState<AccentId>(() => {
+    const saved = localStorage.getItem(ACCENT_STORAGE_KEY) as AccentId | null;
+    return saved || 'tema';
   });
 
   // Apply theme class to document.body
   useEffect(() => {
     document.body.className = `theme-${currentTheme}`;
     localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
+    const mode = THEME_OPTIONS.find((theme) => theme.id === currentTheme)?.mode;
+    if (mode) localStorage.setItem(LAST_THEME_KEYS[mode], currentTheme);
   }, [currentTheme]);
+
+  // Apply the accent on body: the theme classes set the variables on body, so an inline style there wins
+  useEffect(() => {
+    const accent = ACCENT_OPTIONS.find((option) => option.id === currentAccent);
+    if (accent && accent.id !== 'tema') {
+      document.body.style.setProperty('--accent-color', accent.color);
+      document.body.style.setProperty('--accent-hover', accent.hover);
+    } else {
+      document.body.style.removeProperty('--accent-color');
+      document.body.style.removeProperty('--accent-hover');
+    }
+    localStorage.setItem(ACCENT_STORAGE_KEY, currentAccent);
+  }, [currentAccent, currentTheme]);
 
   // View Mode: 'decision_24h' (default), 'day_comparison', 'price_alerts', 'full_catalog'
   const [viewMode, setViewMode] = useState<DashboardViewMode>('decision_24h');
@@ -174,6 +197,8 @@ export function App() {
         config={config}
         currentTheme={currentTheme}
         onSelectTheme={setCurrentTheme}
+        currentAccent={currentAccent}
+        onSelectAccent={setCurrentAccent}
         viewMode={viewMode}
         onChangeViewMode={setViewMode}
         onOpenSettings={() => setIsSettingsOpen(true)}

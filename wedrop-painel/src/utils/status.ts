@@ -1,4 +1,4 @@
-import { ThemeOption } from '../types/wedrop';
+import { AccentOption, ThemeOption } from '../types/wedrop';
 import { APP_TIME_ZONE, daysBetween, dayKeyFromDate, shiftDayKey, todayKey } from './dates';
 
 export const CATEGORY_NAMES = [
@@ -69,6 +69,24 @@ export const THEME_OPTIONS: ThemeOption[] = [
     primaryColor: '#06b6d4',
     badgeBg: 'bg-cyan-500',
   },
+];
+
+/** Último tema escolhido em cada modo: a chave claro/escuro volta para ele. */
+export const LAST_THEME_KEYS = {
+  light: 'wedrop_last_light',
+  dark: 'wedrop_last_dark',
+} as const;
+
+/** Cores de destaque selecionáveis. 'tema' mantém a cor que o tema define. */
+export const ACCENT_OPTIONS: AccentOption[] = [
+  { id: 'tema', name: 'Padrão do tema', color: '', hover: '' },
+  { id: 'vermelho', name: 'Vermelho', color: '#ef4444', hover: '#dc2626' },
+  { id: 'esmeralda', name: 'Esmeralda', color: '#10b981', hover: '#059669' },
+  { id: 'ciano', name: 'Ciano', color: '#06b6d4', hover: '#0891b2' },
+  { id: 'azul', name: 'Azul', color: '#3b82f6', hover: '#2563eb' },
+  { id: 'violeta', name: 'Violeta', color: '#8b5cf6', hover: '#7c3aed' },
+  { id: 'rosa', name: 'Rosa', color: '#ec4899', hover: '#db2777' },
+  { id: 'ambar', name: 'Âmbar', color: '#f59e0b', hover: '#d97706' },
 ];
 
 export function normalizeText(text: string | null | undefined): string {

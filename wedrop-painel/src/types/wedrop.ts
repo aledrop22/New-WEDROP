@@ -148,6 +148,24 @@ export interface ThemeOption {
   badgeBg: string;
 }
 
+/** Cor de destaque escolhida pelo usuário; 'tema' usa a cor padrão do tema atual. */
+export type AccentId =
+  | 'tema'
+  | 'vermelho'
+  | 'esmeralda'
+  | 'ciano'
+  | 'azul'
+  | 'violeta'
+  | 'rosa'
+  | 'ambar';
+
+export interface AccentOption {
+  id: AccentId;
+  name: string;
+  color: string;
+  hover: string;
+}
+
 export type DashboardViewMode =
   | 'decision_24h'
   | 'day_comparison'

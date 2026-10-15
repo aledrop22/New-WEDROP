@@ -1,16 +1,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Sun, Moon, Palette, Check } from 'lucide-react';
-import { ThemeId } from '../types/wedrop';
-import { THEME_OPTIONS } from '../utils/status';
+import { ThemeId, AccentId } from '../types/wedrop';
+import { THEME_OPTIONS, ACCENT_OPTIONS, LAST_THEME_KEYS } from '../utils/status';
 
 interface ThemeSelectorProps {
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
+  currentAccent: AccentId;
+  onSelectAccent: (accentId: AccentId) => void;
 }
 
 export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
   currentTheme,
   onSelectTheme,
+  currentAccent,
+  onSelectAccent,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -18,12 +22,14 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
   const activeThemeObj = THEME_OPTIONS.find((t) => t.id === currentTheme) || THEME_OPTIONS[0];
   const isDarkMode = activeThemeObj.mode === 'dark';
 
-  // Toggle between dark and light by switching to the primary theme of the other mode
+  // Troca de modo: volta para o último tema escolhido no modo oposto
   const handleToggleMode = () => {
+    const savedLight = localStorage.getItem(LAST_THEME_KEYS.light) as ThemeId | null;
+    const savedDark = localStorage.getItem(LAST_THEME_KEYS.dark) as ThemeId | null;
     if (isDarkMode) {
-      onSelectTheme('light-wedrop');
+      onSelectTheme(savedLight || 'light-wedrop');
     } else {
-      onSelectTheme('dark-onyx');
+      onSelectTheme(savedDark || 'dark-black');
     }
   };
 
@@ -156,6 +162,42 @@ export const ThemeSelector: React.FC<ThemeSelectorProps> = ({
                       </div>
                     </div>
                     {isSelected && <Check className="w-3.5 h-3.5 text-cyan-400 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <hr className="border-slate-200 dark:border-slate-700 my-2" />
+
+          {/* Section: cor de destaque (vale para qualquer tema) */}
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1.5 px-1">
+              Cor de destaque
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {ACCENT_OPTIONS.map((accent) => {
+                const isSelected = accent.id === currentAccent;
+                return (
+                  <button
+                    key={accent.id}
+                    type="button"
+                    onClick={() => onSelectAccent(accent.id)}
+                    className={`flex flex-col items-center gap-1 p-1.5 rounded-lg text-[10px] transition-colors ${
+                      isSelected ? 'ring-1 ring-accent bg-card-secondary font-semibold' : 'hover:bg-card-secondary'
+                    }`}
+                    title={accent.name}
+                  >
+                    <span
+                      className="w-5 h-5 rounded-full border border-white/20"
+                      style={{
+                        background:
+                          accent.id === 'tema'
+                            ? 'conic-gradient(#ef4444, #10b981, #06b6d4, #8b5cf6, #ef4444)'
+                            : accent.color,
+                      }}
+                    />
+                    <span className="leading-tight text-center">{accent.name}</span>
                   </button>
                 );
               })}

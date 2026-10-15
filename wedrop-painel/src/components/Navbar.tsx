@@ -1,12 +1,14 @@
 import React from 'react';
 import { Database, RefreshCw, Settings, Download, ExternalLink, Zap, BarChart2, Tag, LayoutGrid } from 'lucide-react';
-import { DataSourceConfig, ThemeId, DashboardViewMode } from '../types/wedrop';
+import { DataSourceConfig, ThemeId, AccentId, DashboardViewMode } from '../types/wedrop';
 import { ThemeSelector } from './ThemeSelector';
 
 interface NavbarProps {
   config: DataSourceConfig;
   currentTheme: ThemeId;
   onSelectTheme: (themeId: ThemeId) => void;
+  currentAccent: AccentId;
+  onSelectAccent: (accentId: AccentId) => void;
   viewMode: DashboardViewMode;
   onChangeViewMode: (mode: DashboardViewMode) => void;
   onOpenSettings: () => void;
@@ -19,6 +21,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   config,
   currentTheme,
   onSelectTheme,
+  currentAccent,
+  onSelectAccent,
   viewMode,
   onChangeViewMode,
   onOpenSettings,
@@ -108,7 +112,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Right: Theme Switcher & Actions */}
           <div className="flex items-center space-x-1.5 sm:space-x-2">
             {/* Theme Selector (Chavinha Dark/Light + 6 Temas) */}
-            <ThemeSelector currentTheme={currentTheme} onSelectTheme={onSelectTheme} />
+            <ThemeSelector
+              currentTheme={currentTheme}
+              onSelectTheme={onSelectTheme}
+              currentAccent={currentAccent}
+              onSelectAccent={onSelectAccent}
+            />
 
             {/* Refresh button */}
             <button
