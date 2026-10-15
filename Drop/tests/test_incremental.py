@@ -253,17 +253,18 @@ class RefreshCategoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.failed_ids, [])
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 1})
 
-    async def test_failed_balance_read_falls_back_to_full_category(self):
+    async def test_failed_balance_read_is_retried_only_for_failed_products(self):
         listing = {"1": "https://x/catalog/1", "2": "https://x/catalog/2"}
         summary, crawler = await self._refresh(
             count=2, baseline=2, listing=listing, failures_per_call=[{"2"}, set()]
         )
 
-        self.assertEqual(summary.balance_only_categories, [])
-        self.assertEqual(summary.full_categories, ["Cozinha"])
-        light, listed, gone = crawler.calls
-        self.assertEqual([job.product_id for job in listed], ["1", "2"])
-        self.assertEqual(gone, [])
+        # Falha pontual não reabre a categoria inteira: relê só o produto 2 e fecha a categoria
+        self.assertEqual(summary.balance_only_categories, ["Cozinha"])
+        self.assertEqual(summary.full_categories, [])
+        self.assertEqual(len(crawler.calls), 2)
+        light, retry = crawler.calls
+        self.assertEqual([job.product_id for job in retry], ["2"])
         self.assertEqual(summary.failed_ids, [])
         self.assertEqual(self.repository.category_baselines(), {"Cozinha": 2})
 

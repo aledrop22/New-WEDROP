@@ -34,7 +34,7 @@ from .config import (
 )
 from .logs import configure_progress_logging, log_progress
 from .scraping.browser import open_browser
-from .scraping.catalog import Category, filter_categories, list_categories, read_category_links
+from .scraping.catalog import Category, ListingError, filter_categories, list_categories, read_category_links
 from .scraping.product_page import ProductJob, ProductReader
 from .scraping.session import SessionExpiredError, ensure_authenticated
 from .storage import products_file
@@ -469,19 +469,24 @@ async def _refresh_catalog(
     stored = products_json.by_category()
     crawler = _ProductCrawler([ProductReader(page) for page in pages], sink, relogin)
     for index, category in enumerate(categories, 1):
-        await _refresh_category(
-            f"[{index}/{len(categories)}] {category.name}",
-            category,
-            baselines,
-            stored.get(category.name, []),
-            listing_page,
-            crawler,
-            products_json,
-            repository,
-            supabase,
-            captured_at,
-            summary,
-        )
+        try:
+            await _refresh_category(
+                f"[{index}/{len(categories)}] {category.name}",
+                category,
+                baselines,
+                stored.get(category.name, []),
+                listing_page,
+                crawler,
+                products_json,
+                repository,
+                supabase,
+                captured_at,
+                summary,
+            )
+        except ListingError as exc:
+            # Uma categoria com paginação quebrada não derruba as outras: fica incompleta e é tentada de novo
+            log_progress(f"Categoria {category.name} não pôde ser listada ({exc}); seguindo para a próxima.")
+            summary.shortfall_categories.append(category.name)
         sink.flush()
         products_json.save()
 
@@ -511,11 +516,19 @@ async def _refresh_category(
             f"{len(available)} com o dia anterior ({len(known) - len(available)} esgotados ignorados)."
         )
         failures = await crawler.crawl([_balance_job(record, category) for record in available])
+        if failures:
+            # Falha pontual (página que não carregou): relê só esses produtos, não a categoria inteira
+            log_progress(f"  {len(failures)} produto(s) não lidos; releitura só deles.")
+            failures = await crawler.crawl([job for job, _ in failures])
         if not failures:
             summary.balance_only_categories.append(category.name)
             _save_category(repository, supabase, category, len(available), captured_at)
             return
-        reason = f"{len(failures)} produto(s) não lidos só em preço e saldo"
+        summary.failed_ids.extend(job.product_id for job, _ in failures)
+        log_progress(
+            f"Categoria {category.name} não ficou completa; a próxima execução relê só os produtos que faltaram."
+        )
+        return
 
     log_progress(f"{label}: categoria inteira ({reason}).")
     summary.full_categories.append(category.name)
