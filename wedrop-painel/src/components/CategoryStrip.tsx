@@ -3,6 +3,12 @@ import { CategorySummary } from '../types/wedrop';
 import { formatInt } from '../utils/status';
 import { Layers, CheckCircle2, XCircle, LayoutList, Columns } from 'lucide-react';
 
+const MEDAL_COLORS = [
+  { color: '#eab308', text: '#1c1917' }, // 1º ouro
+  { color: '#cbd5e1', text: '#0f172a' }, // 2º prata
+  { color: '#cd7f32', text: '#ffffff' }, // 3º bronze
+];
+
 interface CategoryStripProps {
   categories: CategorySummary[];
   selectedCategory: string | null;
@@ -85,11 +91,8 @@ export const CategoryStrip: React.FC<CategoryStripProps> = ({
           const isSelected = selectedCategory === cat.name;
           const totalProds = cat.expected_products ?? cat.mapped_products;
 
-          const medalStyles = [
-            'bg-amber-500 text-white shadow-xs', // 1st
-            'bg-slate-400 text-white shadow-xs', // 2nd
-            'bg-amber-700 text-white shadow-xs', // 3rd
-          ];
+          // Ouro, prata e bronze. Cores em estilo inline: a classe wd-card-rank usa a cor de destaque
+          const medal = MEDAL_COLORS[position - 1];
 
           return (
             <button
@@ -98,17 +101,21 @@ export const CategoryStrip: React.FC<CategoryStripProps> = ({
               onClick={() => onSelectCategory(isSelected ? null : cat.name)}
               className={`wd-card text-left transition-all cursor-pointer p-3 w-full flex flex-col justify-between ${
                 isTop3
-                  ? 'border-2 border-accent shadow-sm'
+                  ? 'border-2 shadow-sm'
                   : isTop5
                   ? 'wd-card-top'
                   : ''
               } ${isSelected ? 'selected ring-2 ring-accent' : ''}`}
+              style={isTop3 ? { borderColor: medal.color } : undefined}
             >
               <div>
                 {/* Ranking Medal */}
                 {isTop3 ? (
                   <div className="text-center mb-1.5">
-                    <span className={`wd-card-rank ${medalStyles[position - 1]}`}>
+                    <span
+                      className="wd-card-rank shadow-xs"
+                      style={{ backgroundColor: medal.color, color: medal.text }}
+                    >
                       {position}º {position === 1 ? '🥇 Líder' : position === 2 ? '🥈 2º' : '🥉 3º'}
                     </span>
                   </div>
