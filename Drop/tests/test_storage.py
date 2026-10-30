@@ -26,7 +26,9 @@ class StorageTests(unittest.TestCase):
             self.assertIsNotNone(parsed)
             if parsed is not None:
                 self.assertEqual(parsed.strftime("%Y-%m-%dT%H:%M:%S"), "2026-10-10T15:42:08")
-        self.assertEqual(parse_quantity("- 12 unidades"), 12)
+        # parse_quantity retorna valor absoluto (sem sinal)
+        self.assertEqual(parse_quantity("-12 unidades"), 12)
+        self.assertEqual(parse_quantity("+526 unidades"), 526)
         self.assertIsNone(parse_event_datetime("data indisponível"))
 
     def test_classifies_sales_and_stock_entries(self):
@@ -51,12 +53,12 @@ class StorageTests(unittest.TestCase):
             "stock_history": [
                 {
                     "type": "Saída",
-                    "quantity": "- 2",
+                    "quantity": "-2",
                     "date": "10/10/2026 15:42:08",
                 },
                 {
                     "type": "Entrada",
-                    "quantity": "+ 5",
+                    "quantity": "+5",
                     "date": "10/10/2026 15:43:08",
                 },
             ],
@@ -106,17 +108,17 @@ class StorageTests(unittest.TestCase):
                         "stock_history": [
                             {
                                 "type": "Venda",
-                                "quantity": "- 2",
+                                "quantity": "-2",
                                 "date": "10/10/2026 00:00:00",
                             },
                             {
                                 "type": "Entrada",
-                                "quantity": "+ 5",
+                                "quantity": "+5",
                                 "date": "11/10/2026 23:59:59",
                             },
                             {
                                 "type": "Venda",
-                                "quantity": "- 3",
+                                "quantity": "-3",
                                 "date": "12/10/2026 23:59:59",
                             },
                         ],
@@ -131,7 +133,7 @@ class StorageTests(unittest.TestCase):
                         "stock_history": [
                             {
                                 "type": "Venda",
-                                "quantity": "- 4",
+                                "quantity": "-4",
                                 "date": "11/10/2026 12:00:00",
                             }
                         ],
@@ -145,7 +147,7 @@ class StorageTests(unittest.TestCase):
                         "stock_history": [
                             {
                                 "type": "Venda",
-                                "quantity": "- 8",
+                                "quantity": "-8",
                                 "date": "11/10/2026 12:00:00",
                             }
                         ],
@@ -345,7 +347,7 @@ class StorageTests(unittest.TestCase):
             "stock_history": [
                 {
                     "type": "Saída",
-                    "quantity": "- 1",
+                    "quantity": "-1",
                     "date": "10/10/2026 12:00:00",
                 }
             ],

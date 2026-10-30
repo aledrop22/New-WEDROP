@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable, Sequence
 from typing import Any
 from urllib.parse import urlparse
@@ -15,9 +16,11 @@ _PRODUCT_PATH = re.compile(
 )
 _MONEY = re.compile(r"R\$\s*[\d.,]+")
 _MONEY_LAST_RESORT = re.compile(r"R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?")
-_MOVEMENT_ENTRY = "ENTRADA"
-_MOVEMENT_EXIT = frozenset({"SAÍDA", "SAIDA"})
 _STOCK_PLACEHOLDERS = frozenset({"DISPONÍVEL", "INDISPONÍVEL"})
+
+SALE_KIND = "sale"
+STOCK_IN_KIND = "stock_in"
+OTHER_KIND = "other"
 
 # Rótulo da página -> campo do produto.
 SPEC_LABEL_FIELDS = {
@@ -29,8 +32,24 @@ SPEC_LABEL_FIELDS = {
     "descrição": "description",
 }
 
+_MOVEMENT_ENTRY = "ENTRADA"
+_MOVEMENT_EXIT = {"SAÍDA", "VENDA"}
+_MOVEMENT_SNAPSHOT = {"SALDO", "SALDO INICIAL"}
+
+
+def classify_movement(value: str) -> str:
+    """Classifica o tipo da movimentação em venda, entrada de estoque ou outra."""
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    if "venda" in normalized or "saida" in normalized:
+        return SALE_KIND
+    if "entrada" in normalized or "recebimento" in normalized:
+        return STOCK_IN_KIND
+    return OTHER_KIND
+
 
 def product_id_from_url(url: str) -> str:
+    # ... (rest of the file until _first_number)
     """ID do produto a partir do endereço /catalog/<id>/<slug>."""
     match = _PRODUCT_PATH.search(urlparse(url).path)
     if not match:
@@ -91,7 +110,8 @@ def parse_first_int(text: str) -> int | None:
 
 
 def _first_number(text: str) -> int | None:
-    match = re.search(r"\d+", text)
+    """Extrai o primeiro número com sinal do texto."""
+    match = re.search(r"([+-]?\d+)", text)
     return int(match.group()) if match else None
 
 
@@ -109,7 +129,7 @@ def _initial_balance(history: list[dict[str, Any]]) -> int:
 
 
 def calculate_current_balance(history: list[dict[str, Any]]) -> int:
-    """Saldo atual: saldo inicial + entradas - saídas do histórico de movimentações."""
+    """Saldo atual: saldo inicial + somatório de todas as movimentações (números já têm sinal)."""
     if not history:
         return 0
     balance = _initial_balance(history)
@@ -118,10 +138,11 @@ def calculate_current_balance(history: list[dict[str, Any]]) -> int:
         number = _first_number(str(movement.get("quantity", "")))
         if number is None:
             continue
-        if kind == _MOVEMENT_ENTRY:
-            balance += number
-        elif kind in _MOVEMENT_EXIT:
-            balance -= number
+        # Se for SALDO/SALDO INICIAL, já foi usado na base, ignora no loop
+        if kind in _MOVEMENT_SNAPSHOT:
+            continue
+        # Entradas e saídas já têm sinal (+526 ou -1)
+        balance += number
     return balance
 
 

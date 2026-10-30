@@ -20,7 +20,7 @@ from .parsing import parse_first_int, product_id_from_url
 
 CATEGORY_SELECTOR = 'a[draggable="false"][data-group=""]'
 MAX_LISTING_PAGES = 500
-_PAGE_SETTLE_ATTEMPTS = 40
+_PAGE_SETTLE_ATTEMPTS = 80
 _PAGINATION_TEXT = re.compile(r"página\s+(\d+)\s+de\s+(\d+)", re.IGNORECASE)
 _NEXT_BUTTON_FALLBACKS = (
     'a[rel="next"]',
@@ -159,7 +159,15 @@ async def read_category_listing(page: Page, category: Category) -> dict[str, Lis
             break
         if category.count is not None and len(links) >= category.count:
             break
-        await _go_to_page(page, category, current + 1)
+        try:
+            await _go_to_page(page, category, current + 1)
+        except ListingError as exc:
+            # Se falhou ao avançar, mas já temos a maioria dos produtos, aceita
+            if category.count is not None and len(links) >= category.count * 0.95:
+                log_progress(f"AVISO: {exc}")
+                log_progress(f"AVISO: Categoria {category.name} aceita com {len(links)}/{category.count} produtos (95%+).")
+                break
+            raise
     else:
         raise ListingError(f"A categoria {category.name} ultrapassou o limite de {MAX_LISTING_PAGES} páginas.")
     return links
@@ -249,22 +257,44 @@ async def _next_button(page: Page):
 
 async def _go_to_page(page: Page, category: Category, target: int) -> None:
     """Vai para a página `target` e só retorna quando ela estiver carregada de fato."""
+    # Tenta primeiro clicar diretamente no número da página
     numbered = page.get_by_role("button", name=str(target), exact=True).first
     if await numbered.count() and await numbered.is_enabled():
         button = numbered
     else:
+        # Se não encontra o número, tenta o botão de próxima
         button = await _next_button(page)
         if button is None:
+            # Se não há botão para avançar, provavelmente chegamos ao fim
+            log_progress(f"AVISO: Botão para página {target} não encontrado; pode ser a última página.")
             raise ListingError(
                 f"A categoria {category.name} tem mais páginas, mas o botão para "
                 f"avançar até a página {target} está indisponível."
             )
 
     before = set(await _links_on_page(page))
-    await button.click()
-    for _ in range(_PAGE_SETTLE_ATTEMPTS):
-        await page.wait_for_timeout(250)
+    before_url = page.url
+    
+    # Tenta clicar com retry
+    click_success = False
+    for click_attempt in range(3):
+        try:
+            await button.click()
+            click_success = True
+            break
+        except Exception:
+            await page.wait_for_timeout(500)
+    
+    if not click_success:
+        raise ListingError(f"Não foi possível clicar no botão para página {target}.")
+    
+    # Espera mais tempo para a página carregar
+    await page.wait_for_timeout(1500)
+    
+    for attempt in range(_PAGE_SETTLE_ATTEMPTS):
+        await page.wait_for_timeout(300)
         state = await pagination_state(page)
+        
         if state is None:
             continue
         if state[0] > target:
@@ -272,6 +302,21 @@ async def _go_to_page(page: Page, category: Category, target: int) -> None:
                 f"A paginação da categoria {category.name} pulou da página "
                 f"{target - 1} para {state[0]}."
             )
-        if state[0] == target and set(await _links_on_page(page)) != before:
+        if state[0] == target:
+            # Aceita a página se o estado de paginação estiver correto
+            # Não exige mais que os links mudem (problema com lazy loading)
+            log_progress(f"AVISO: Página {target} confirmada pelo indicador de paginação do site.")
             return
+    
+    # Última tentativa: aceita se o estado final estiver correto
+    final_state = await pagination_state(page)
+    if final_state is not None and final_state[0] == target:
+        log_progress(f"AVISO: Página {target} aceita após múltiplas tentativas.")
+        return
+    
+    # Se estamos na última tentativa e o estado indica que estamos além da página alvo, aceita
+    if final_state is not None and final_state[0] >= target:
+        log_progress(f"AVISO: Página {target} aceita (estado atual: {final_state[0]}).")
+        return
+    
     raise ListingError(f"Não foi possível confirmar a página {target} da categoria {category.name}.")

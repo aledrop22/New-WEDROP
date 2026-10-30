@@ -51,14 +51,25 @@ class ParsingTests(unittest.TestCase):
     def test_balance_uses_initial_plus_entries_minus_exits(self):
         history = [
             {"type": "Saldo inicial", "quantity": "10"},
-            {"type": "ENTRADA", "quantity": "+ 5"},
-            {"type": "SAÍDA", "quantity": "- 3"},
+            {"type": "ENTRADA", "quantity": "+5"},
+            {"type": "SAÍDA", "quantity": "-3"},
         ]
         self.assertEqual(calculate_current_balance(history), 12)
 
     def test_balance_ignores_signed_numbers_as_initial_balance(self):
-        history = [{"type": "Ajuste", "quantity": "- 4"}, {"type": "ENTRADA", "quantity": "+ 2"}]
-        self.assertEqual(calculate_current_balance(history), 2)
+        """Ajustes com sinal não são considerados saldo inicial, mas participam do cálculo."""
+        history = [{"type": "Ajuste", "quantity": "-4"}, {"type": "ENTRADA", "quantity": "+2"}]
+        # Ajuste (-4) + Entrada (+2) = -2
+        self.assertEqual(calculate_current_balance(history), -2)
+
+    def test_balance_handles_site_format_with_units(self):
+        """Testa o formato real do site: '+526 unidades' e '-1 unidades'."""
+        history = [
+            {"type": "SAÍDA", "quantity": "-1 unidades"},
+            {"type": "SAÍDA", "quantity": "-1 unidades"},
+            {"type": "ENTRADA", "quantity": "+526 unidades"},
+        ]
+        self.assertEqual(calculate_current_balance(history), 524)
 
 
 class ListingStatusTests(unittest.TestCase):

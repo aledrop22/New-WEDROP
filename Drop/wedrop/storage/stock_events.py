@@ -40,9 +40,12 @@ def parse_event_datetime(value: str) -> datetime | None:
 
 
 def parse_quantity(value: str) -> int:
-    """Quantidade absoluta de um texto como '- 2 un.'."""
-    digits = re.sub(r"\D", "", value)
-    return int(digits) if digits else 0
+    """Quantidade absoluta de um texto como '- 2 un.' ou '+526 unidades'."""
+    # Extrai o número absoluto (sem sinal)
+    match = re.search(r"\d+", value)
+    if not match:
+        return 0
+    return int(match.group())
 
 
 def classify_movement(value: str) -> str:

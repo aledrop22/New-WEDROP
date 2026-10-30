@@ -222,7 +222,7 @@ class SalesRepository:
         return self._rows(
             """
             SELECT p.product_id, p.name, p.category, p.sku,
-                   SUM(e.quantity) AS units_sold,
+                   SUM(ABS(e.quantity)) AS units_sold,
                    COUNT(e.event_id) AS sale_events
             FROM stock_events AS e
             JOIN products AS p ON p.product_id = e.product_id
@@ -242,9 +242,9 @@ class SalesRepository:
             f"""
             SELECT c.category_url, c.name, c.expected_products, c.mapped_products,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_sold,
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_sold,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_restocked,
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_restocked,
                    COUNT(DISTINCT CASE WHEN {_ACTIVE_SQL} AND NOT {_INACTIVE_SQL}
                                        THEN p.product_id END) AS active_products,
                    COUNT(DISTINCT CASE WHEN {_INACTIVE_SQL}
@@ -276,9 +276,9 @@ class SalesRepository:
                    p.weight, p.height, p.width, p.length, p.description,
                    p.number_sales,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_sold,
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_sold,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_restocked
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_restocked
             FROM products AS p
             LEFT JOIN stock_events AS e
                    ON e.product_id = p.product_id
@@ -305,9 +305,9 @@ class SalesRepository:
             """
             SELECT p.product_id, p.name, p.sku, p.stock, p.real_balance,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_sold,
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_sold,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_restocked,
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_restocked,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
                                      THEN 1 ELSE 0 END), 0) AS sale_events,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
@@ -339,9 +339,9 @@ class SalesRepository:
             f"""
             SELECT substr(e.event_at, 1, 10) AS day,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_sold,
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_sold,
                    COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
-                                     THEN e.quantity ELSE 0 END), 0) AS units_restocked
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_restocked
             FROM stock_events AS e
             JOIN products AS p ON p.product_id = e.product_id
             WHERE e.event_at >= ? AND e.event_at < ?
@@ -408,7 +408,7 @@ class SalesRepository:
         return self._rows(
             """
             SELECT p.product_id, p.name, p.category, p.sku, p.url,
-                   SUM(e.quantity) AS units_sold
+                   SUM(ABS(e.quantity)) AS units_sold
             FROM stock_events AS e
             JOIN products AS p ON p.product_id = e.product_id
             WHERE e.event_kind = 'sale'
@@ -426,7 +426,7 @@ class SalesRepository:
         start_at, end_at = _day_range(first_day, through_day)
         return self._rows(
             """
-            SELECT substr(event_at, 1, 10) AS day, SUM(quantity) AS units_sold
+            SELECT substr(event_at, 1, 10) AS day, SUM(ABS(quantity)) AS units_sold
             FROM stock_events
             WHERE event_kind = 'sale'
               AND event_at >= ?

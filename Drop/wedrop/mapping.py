@@ -174,19 +174,26 @@ class _BatchSink:
 class _ProductCrawler:
     """Lê os produtos com uma página do navegador por worker e entrega cada um ao sink."""
 
-    def __init__(self, readers: list[ProductReader], sink: _BatchSink, relogin):
+    def __init__(self, readers: list[ProductReader], sink: _BatchSink, relogin, site_total: int = 0, saved_before: int = 0):
         self._readers = readers
         self._sink = sink
         self._relogin = relogin
         self._done = 0
         self._total = 0
         self._unchanged = 0
+        self._site_total = site_total
+        self._saved_before = saved_before
+        self._last_progress_log = 0
 
     async def crawl(self, jobs: list[ProductJob]) -> list[tuple[ProductJob, Exception]]:
         pending: deque[ProductJob] = deque(jobs)
         self._done, self._total, self._unchanged = 0, len(jobs), 0
         failures: list[tuple[ProductJob, Exception]] = []
         relogins = 0
+
+        if self._site_total > 0:
+            log_progress(f"Iniciando leitura de {self._total} produtos (total site: {self._site_total}, já salvos: {self._saved_before})...")
+
         while pending:
             session_lost = asyncio.Event()
             await asyncio.gather(
@@ -246,8 +253,14 @@ class _ProductCrawler:
             missing.append("disponibilidade")
         if missing:
             log_progress(f"⚠️ Campos vazios: {', '.join(missing)} (ID {product['product_id']})")
+
+        progress_msg = f"[{self._done}/{self._total}]"
+        if self._site_total > 0:
+            total_saved = self._saved_before + self._done
+            progress_msg += f" [Total: {total_saved}/{self._site_total}]"
+
         log_progress(
-            f"[{self._done}/{self._total}] {product.get('name') or 'nome indisponível'} "
+            f"{progress_msg} {product.get('name') or 'nome indisponível'} "
             f"(ID {product['product_id']}): {len(product.get('stock_history', []))} movimentações."
         )
 
@@ -301,7 +314,10 @@ async def run_mapping(
     resuming = _prepare_products_file(paths, options, state)
     summary = MappingSummary(resumed=resuming, partial=options.is_partial)
     if not options.is_partial:
-        save_run_state(paths.state_file, IN_PROGRESS, saved_total=len(products_file.read_product_ids(paths.products_file)))
+        saved_count = len(products_file.read_product_ids(paths.products_file))
+        save_run_state(paths.state_file, IN_PROGRESS, saved_total=saved_count)
+        if state and state.site_total > 0:
+            log_progress(f"📊 Progresso anterior: {saved_count} de {state.site_total} produtos ({state.progress_percent}%)")
 
     repository = SalesRepository(paths.database_file)
     captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -345,7 +361,8 @@ async def _map_catalog(
     log_progress(f"Categorias selecionadas: {len(categories)}; o site informa {summary.site_total} produtos.")
 
     saved_ids = products_file.read_product_ids(paths.products_file)
-    crawler = _ProductCrawler([ProductReader(page) for page in pages], sink, relogin)
+    saved_before = len(saved_ids)
+    crawler = _ProductCrawler([ProductReader(page) for page in pages], sink, relogin, summary.site_total, saved_before)
     remaining = options.product_limit
     for index, category in enumerate(categories, 1):
         log_progress(f"[{index}/{len(categories)}] Lendo listagem da categoria {category.name}...")
@@ -366,6 +383,12 @@ async def _map_catalog(
         if pending:
             failures = await crawler.crawl(pending)
             summary.failed_ids.extend(job.product_id for job, _ in failures)
+
+        saved_current = len(products_file.read_product_ids(paths.products_file))
+        if not options.is_partial:
+            save_run_state(paths.state_file, IN_PROGRESS, summary.site_total, saved_current, len(summary.failed_ids), category.name)
+            log_progress(f"📊 Progresso: {saved_current} de {summary.site_total} produtos coletados até agora.")
+
         if remaining == 0:
             break
 
@@ -379,10 +402,10 @@ def _finish(paths: DataPaths, summary: MappingSummary) -> None:
     if not summary.partial:
         status = COMPLETED if summary.is_complete else IN_PROGRESS
         save_run_state(paths.state_file, status, summary.site_total, summary.saved_total)
-    log_progress(
-        f"Comparação com o site: {summary.site_total} produtos informados; "
-        f"data.json com {summary.saved_total} (diferença {max(summary.site_total - summary.saved_total, 0)})."
-    )
+
+    diff = max(summary.site_total - summary.saved_total, 0)
+    log_progress(f"📊 STATUS FINAL: {summary.saved_total} de {summary.site_total} produtos coletados ({diff} faltando).")
+
     if summary.failed_ids:
         log_progress(f"Produtos com erro, retomados na próxima execução: {summary.failed_ids[:20]}")
     log_progress("Mapeamento concluído." if summary.is_complete else "Mapeamento incompleto; execute novamente para retomar.")
@@ -425,7 +448,7 @@ async def run_incremental(
         async with async_playwright() as playwright:
             browser, context = await open_browser(playwright)
             try:
-                await _refresh_catalog(context, options, products_json, sink, repository, supabase, captured_at, summary)
+                await _refresh_catalog(context, options, products_json, sink, repository, supabase, captured_at, summary, paths)
             finally:
                 await browser.close()
     finally:
@@ -452,6 +475,7 @@ async def _refresh_catalog(
     supabase: SupabaseRepository | None,
     captured_at: str,
     summary: MappingSummary,
+    paths: DataPaths,
 ) -> None:
     pages = [await context.new_page() for _ in range(max(1, options.workers))]
     listing_page = pages[0]
@@ -467,7 +491,8 @@ async def _refresh_catalog(
 
     baselines = repository.category_baselines()
     stored = products_json.by_category()
-    crawler = _ProductCrawler([ProductReader(page) for page in pages], sink, relogin)
+    saved_before = len(products_file.read_product_ids(paths.products_file))
+    crawler = _ProductCrawler([ProductReader(page) for page in pages], sink, relogin, summary.site_total, saved_before)
     for index, category in enumerate(categories, 1):
         try:
             await _refresh_category(

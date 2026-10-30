@@ -24,10 +24,18 @@ class RunState:
     site_total: int = 0
     saved_total: int = 0
     updated_at: str = ""
+    failed_count: int = 0
+    last_category: str = ""
 
     @property
     def is_in_progress(self) -> bool:
         return self.status == IN_PROGRESS
+
+    @property
+    def progress_percent(self) -> float:
+        if self.site_total == 0:
+            return 0.0
+        return round((self.saved_total / self.site_total) * 100, 2)
 
 
 def load_run_state(path: Path) -> RunState | None:
@@ -43,15 +51,19 @@ def load_run_state(path: Path) -> RunState | None:
         site_total=int(data.get("site_total", 0)),
         saved_total=int(data.get("saved_total", 0)),
         updated_at=str(data.get("updated_at", "")),
+        failed_count=int(data.get("failed_count", 0)),
+        last_category=str(data.get("last_category", "")),
     )
 
 
-def save_run_state(path: Path, status: str, site_total: int = 0, saved_total: int = 0) -> RunState:
+def save_run_state(path: Path, status: str, site_total: int = 0, saved_total: int = 0, failed_count: int = 0, last_category: str = "") -> RunState:
     state = RunState(
         status=status,
         site_total=site_total,
         saved_total=saved_total,
         updated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+        failed_count=failed_count,
+        last_category=last_category,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(path.name + ".tmp")
