@@ -30,11 +30,13 @@ create table if not exists public.wedrop_products (
     description text,
     number_sales text,
     updated_at timestamptz not null,
-    price_changed_at timestamptz
+    price_changed_at timestamptz,
+    first_seen_at timestamptz
 );
 
 -- Em bancos já criados, rode só este comando no SQL Editor (a coleta exige a coluna).
 alter table public.wedrop_products add column if not exists price_changed_at timestamptz;
+alter table public.wedrop_products add column if not exists first_seen_at timestamptz;
 
 create table if not exists public.wedrop_stock_events (
     event_id text primary key,
@@ -53,6 +55,9 @@ create index if not exists wedrop_stock_events_product_date_idx
 
 create index if not exists wedrop_stock_events_kind_date_idx
     on public.wedrop_stock_events (event_kind, event_at);
+
+create index if not exists wedrop_products_first_seen_idx
+    on public.wedrop_products (first_seen_at);
 
 grant all on public.wedrop_categories to service_role;
 grant all on public.wedrop_products to service_role;

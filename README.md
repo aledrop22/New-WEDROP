@@ -42,5 +42,10 @@ streamlit run app_monitoramento_vendas.py
 
 No sidebar, selecione o período e uma categoria para ver vendas, reposições, produtos movimentados e gráficos. A visão geral apresenta o comparativo por categoria e os 20 produtos mais vendidos no período. Consulte [Drop/WEDROP_CATALOG_README.md](Drop/WEDROP_CATALOG_README.md) para detalhes.
 
+## Acompanhar novos produtos disponíveis
+
+No painel web `wedrop-painel`, a aba **Novos produtos** mostra apenas os produtos atualmente disponíveis, com filtro de 3, 7, 15, 20, 30, 60, 90 ou 120 dias. A lista informa quando cada produto foi identificado pela primeira vez e quantas unidades foram vendidas desde então, permitindo separar os itens com e sem vendas.
+
+Para habilitar esse acompanhamento em um banco Supabase existente, execute `Drop/add_first_seen_field.sql` no SQL Editor do Supabase. Produtos antigos são preenchidos com `updated_at` como referência inicial; essa data retroativa é uma aproximação, enquanto os produtos observados após a migração passam a receber sua primeira data de identificação preservada nas coletas seguintes.
 
 

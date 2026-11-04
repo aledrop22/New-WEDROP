@@ -73,9 +73,12 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["quantity"], 5)
         saved_product = repository.connection.execute(
-            "SELECT sku, stock, real_balance, description FROM products"
+            "SELECT sku, stock, real_balance, description, first_seen_at FROM products"
         ).fetchone()
-        self.assertEqual(tuple(saved_product), ("SKU-123", "15", "12", "Descrição do produto"))
+        self.assertEqual(
+            tuple(saved_product),
+            ("SKU-123", "15", "12", "Descrição do produto", "2026-10-10T16:00:00"),
+        )
 
     def test_period_activity_aggregates_inclusive_dates_by_category_and_product(self):
         temp_dir = self.enterContext(tempfile.TemporaryDirectory())
@@ -321,8 +324,8 @@ class StorageTests(unittest.TestCase):
             repository.session, "get", return_value=successful_response
         ) as get:
             repository.validate()
-        # três tabelas e a coluna price_changed_at de wedrop_products
-        self.assertEqual(get.call_count, 4)
+        # três tabelas e as colunas price_changed_at e first_seen_at de wedrop_products
+        self.assertEqual(get.call_count, 5)
 
         failed_response = Mock(spec=requests.Response)
         failed_response.ok = False
@@ -337,6 +340,11 @@ class StorageTests(unittest.TestCase):
         repository = SupabaseRepository("https://example.supabase.co", "test-key")
         successful_response = Mock(spec=requests.Response)
         successful_response.ok = True
+        existing_products_response = Mock(spec=requests.Response)
+        existing_products_response.ok = True
+        existing_products_response.json.return_value = [
+            {"product_id": "321", "first_seen_at": "2026-10-01T12:00:00+00:00"}
+        ]
         product = {
             "product_id": "321",
             "name": "Produto",
@@ -353,15 +361,18 @@ class StorageTests(unittest.TestCase):
             ],
         }
         with patch.object(
-            repository.session, "post", return_value=successful_response
-        ) as post:
-            repository.save_products([product, product], "2026-10-10T15:00:00-03:00")
+            repository.session, "get", return_value=existing_products_response
+        ):
+            with patch.object(
+                repository.session, "post", return_value=successful_response
+            ) as post:
+                repository.save_products([product, product], "2026-10-10T15:00:00-03:00")
         self.assertEqual(post.call_count, 2)
         product_payload = post.call_args_list[0].kwargs["json"]
         history_payload = post.call_args_list[1].kwargs["json"]
         self.assertEqual(len(product_payload), 2)
         self.assertEqual(product_payload[0]["real_balance"], "3")
+        self.assertEqual(product_payload[0]["first_seen_at"], "2026-10-01T12:00:00+00:00")
         self.assertEqual(len(history_payload), 1)
         self.assertEqual(history_payload[0]["event_kind"], "sale")
         repository.close()
-

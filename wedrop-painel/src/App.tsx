@@ -9,6 +9,7 @@ import { OverviewCharts } from './components/OverviewCharts';
 import { DailyDecisionDashboard } from './components/DailyDecisionDashboard';
 import { DayComparisonView } from './components/DayComparisonView';
 import { PriceFluctuationView } from './components/PriceFluctuationView';
+import { NewProductsView } from './components/NewProductsView';
 import { SettingsModal } from './components/SettingsModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { dataService } from './services/dataService';
@@ -57,6 +58,7 @@ export function App() {
 
   // View Mode: 'decision_24h' (default), 'day_comparison', 'price_alerts', 'full_catalog'
   const [viewMode, setViewMode] = useState<DashboardViewMode>('decision_24h');
+  const [newProductsPeriod, setNewProductsPeriod] = useState(30);
 
   // Date range state: opens on today only, like the Streamlit sidebar
   const [startDate, setStartDate] = useState<string>(() => getLocalDateString());
@@ -113,6 +115,10 @@ export function App() {
   const productsWithoutStatus = useMemo(() => {
     return dataService.getProductsWithoutStatus();
   }, [dataVersion]);
+
+  const newProductsData = useMemo(() => {
+    return dataService.getNewProductsData(newProductsPeriod);
+  }, [newProductsPeriod, dataVersion]);
 
   const categoryProductsWithActivity = useMemo(() => {
     if (!selectedCategory) return [];
@@ -234,9 +240,15 @@ export function App() {
               Monitoramento diário WeDrop
             </h1>
             <p className="text-xs text-muted mt-1 font-medium">
-              Período analisado: <strong className="text-theme">{formatDateBR(startDate)}</strong> a{' '}
-              <strong className="text-theme">{formatDateBR(endDate)}</strong> ·{' '}
-              {config.statusMessage}
+              {viewMode === 'new_products' ? (
+                <>Acompanhamento de entradas no catálogo · filtro padrão de 30 dias</>
+              ) : (
+                <>
+                  Período analisado: <strong className="text-theme">{formatDateBR(startDate)}</strong> a{' '}
+                  <strong className="text-theme">{formatDateBR(endDate)}</strong>
+                </>
+              )}{' '}
+              · {config.statusMessage}
             </p>
           </div>
 
@@ -258,25 +270,35 @@ export function App() {
 
           {showContent && (
             <>
-              {/* Metric Summary Top Strip */}
-              <MetricSummary
-                categoriesCount={categorySummaries.length}
-                activeProducts={totals.activeProducts}
-                inactiveProducts={totals.inactiveProducts}
-                withoutStatusProducts={totals.withoutStatus}
-                unitsSold={totals.unitsSold}
-                unitsRestocked={totals.unitsRestocked}
-                isSingleDay={isSingleDay}
-                onOpenWithoutStatus={() => setForceWithoutStatusOpen(true)}
-              />
-
-              {/* Products Without Status Expander (if any) */}
-              <WithoutStatusExpander
-                products={productsWithoutStatus}
-                forceOpen={forceWithoutStatusOpen}
-              />
+              {viewMode !== 'new_products' && (
+                <>
+                  <MetricSummary
+                    categoriesCount={categorySummaries.length}
+                    activeProducts={totals.activeProducts}
+                    inactiveProducts={totals.inactiveProducts}
+                    withoutStatusProducts={totals.withoutStatus}
+                    unitsSold={totals.unitsSold}
+                    unitsRestocked={totals.unitsRestocked}
+                    isSingleDay={isSingleDay}
+                    onOpenWithoutStatus={() => setForceWithoutStatusOpen(true)}
+                  />
+                  <WithoutStatusExpander
+                    products={productsWithoutStatus}
+                    forceOpen={forceWithoutStatusOpen}
+                  />
+                </>
+              )}
 
               {/* View Mode Content Render */}
+              {viewMode === 'new_products' && (
+                <NewProductsView
+                  data={newProductsData}
+                  periodDays={newProductsPeriod}
+                  onChangePeriod={setNewProductsPeriod}
+                  onSelectProduct={setSelectedProductDetails}
+                />
+              )}
+
               {viewMode === 'decision_24h' && (
                 <DailyDecisionDashboard
                   decisionData={decision24hData}

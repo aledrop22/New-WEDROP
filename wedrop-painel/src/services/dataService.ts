@@ -10,6 +10,8 @@ import {
   ProductPriceComparison,
   Product24hStats,
   Category24hComparison,
+  NewProductsData,
+  NewProductWithSales,
 } from '../types/wedrop';
 import {
   CATEGORY_NAMES,
@@ -20,7 +22,7 @@ import {
   getPastDate,
   parsePriceNumber,
 } from '../utils/status';
-import { APP_TIME_ZONE, clockLabel, eventDayKey, daysBetween, dayKeyFromDate, minutesOfDaySP } from '../utils/dates';
+import { APP_TIME_ZONE, clockLabel, eventDayKey, daysBetween, dayKeyFromDate, minutesOfDaySP, todayKey } from '../utils/dates';
 
 const SNAPSHOT_URL = '/api/snapshot';
 
@@ -171,6 +173,94 @@ class DataService {
 
   public getProductsList(): ProductRecord[] {
     return this.products;
+  }
+
+  public getNewProductsData(days: number): NewProductsData {
+    const now = new Date();
+    const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
+    const today = todayKey();
+    const availableProducts = this.products.filter(
+      (product) => getStatusBucket(product.is_active, product.availability) === 'Ativos'
+    );
+    const productsWithoutFirstSeen = availableProducts.filter((product) => !product.first_seen_at);
+    const cohort = availableProducts.flatMap((product) => {
+      if (!product.first_seen_at) return [];
+      const firstSeenTime = Date.parse(product.first_seen_at);
+      if (Number.isNaN(firstSeenTime) || firstSeenTime < cutoff || firstSeenTime > now.getTime()) return [];
+      const firstSeenDay = dayKeyFromDate(new Date(firstSeenTime));
+      const age = Math.max(
+        0,
+        Math.floor(
+          (Date.UTC(
+            Number(today.slice(0, 4)),
+            Number(today.slice(5, 7)) - 1,
+            Number(today.slice(8, 10))
+          ) -
+            Date.UTC(
+              Number(firstSeenDay.slice(0, 4)),
+              Number(firstSeenDay.slice(5, 7)) - 1,
+              Number(firstSeenDay.slice(8, 10))
+            )) /
+            (24 * 60 * 60 * 1000)
+        )
+      );
+      return [{ product, firstSeenTime, firstSeenDay, age }];
+    });
+    const firstSeenDays = new Map(cohort.map(({ product, firstSeenDay }) => [product.product_id, firstSeenDay]));
+    const sales = new Map<string, { units: number; lastSaleAt: string | null; lastSaleDay: string | null }>();
+
+    for (const event of this.stockEvents) {
+      const firstSeenDay = firstSeenDays.get(event.product_id);
+      if (
+        event.event_kind !== 'sale' ||
+        !firstSeenDay ||
+        event.day < firstSeenDay ||
+        event.day > today
+      ) {
+        continue;
+      }
+      const current = sales.get(event.product_id) || { units: 0, lastSaleAt: null, lastSaleDay: null };
+      const eventTime = event.event_at || event.event_at_raw || null;
+      sales.set(event.product_id, {
+        units: current.units + event.quantity,
+        lastSaleAt: !current.lastSaleDay || event.day >= current.lastSaleDay
+          ? eventTime
+          : current.lastSaleAt,
+        lastSaleDay: !current.lastSaleDay || event.day >= current.lastSaleDay
+          ? event.day
+          : current.lastSaleDay,
+      });
+    }
+
+    const products: NewProductWithSales[] = cohort
+      .map(({ product, firstSeenTime, age }) => {
+        const activity = sales.get(product.product_id);
+        return {
+          ...product,
+          first_seen_at: new Date(firstSeenTime).toISOString(),
+          days_since_first_seen: age,
+          units_sold_since_first_seen: activity?.units || 0,
+          last_sale_at: activity?.lastSaleAt || null,
+        };
+      })
+      .sort(
+        (a, b) =>
+          Date.parse(b.first_seen_at) - Date.parse(a.first_seen_at) ||
+          byNameNoCase(a.name, b.name)
+      );
+
+    const soldProducts = products.filter((product) => product.units_sold_since_first_seen > 0).length;
+    return {
+      totalAvailable: availableProducts.length,
+      products,
+      soldProducts,
+      unsoldProducts: products.length - soldProducts,
+      unitsSoldSinceEntry: products.reduce(
+        (total, product) => total + product.units_sold_since_first_seen,
+        0
+      ),
+      missingFirstSeenCount: productsWithoutFirstSeen.length,
+    };
   }
 
   public getStockEventsList(): StockEventRecord[] {

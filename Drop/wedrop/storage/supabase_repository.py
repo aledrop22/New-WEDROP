@@ -10,7 +10,7 @@ from typing import Any
 import requests
 
 from ..config import load_environment
-from .fields import NULLABLE_TIMESTAMP_FIELDS, PRICE_ALERT_FIELD, PRODUCT_DATA_FIELDS
+from .fields import FIRST_SEEN_FIELD, NULLABLE_TIMESTAMP_FIELDS, PRICE_ALERT_FIELD, PRODUCT_DATA_FIELDS
 from .stock_events import make_event_records
 
 CHUNK_SIZE = 200
@@ -117,6 +117,17 @@ class SupabaseRepository:
                 f"(HTTP {response.status_code}). Execute no SQL Editor do Supabase o "
                 "comando 'alter table' do arquivo supabase_schema.sql antes de coletar."
             )
+        response = self.session.get(
+            f"{self.base_url}/wedrop_products",
+            params={"select": FIRST_SEEN_FIELD, "limit": "0"},
+            timeout=self.timeout,
+        )
+        if not response.ok:
+            raise RuntimeError(
+                f"A coluna {FIRST_SEEN_FIELD} não existe em wedrop_products "
+                f"(HTTP {response.status_code}). Execute no SQL Editor do Supabase o "
+                "comando 'alter table' do arquivo supabase_schema.sql antes de coletar."
+            )
 
     def save_category(self, category: dict[str, Any], mapped_products: int, captured_at: str) -> None:
         self._upsert(
@@ -134,10 +145,24 @@ class SupabaseRepository:
         )
 
     def save_products(self, products: list[dict[str, Any]], captured_at: str) -> None:
-        product_rows = [
-            {field: _column_value(product, field) for field in PRODUCT_DATA_FIELDS} | {"updated_at": captured_at}
-            for product in products
-        ]
+        product_ids = list(
+            dict.fromkeys(
+                str(product["product_id"])
+                for product in products
+                if product.get("product_id")
+            )
+        )
+        existing_first_seen = self._fetch_first_seen_at(product_ids)
+        product_rows = []
+        for product in products:
+            row = {field: _column_value(product, field) for field in PRODUCT_DATA_FIELDS}
+            row[FIRST_SEEN_FIELD] = (
+                product.get(FIRST_SEEN_FIELD)
+                or existing_first_seen.get(str(product.get("product_id")))
+                or captured_at
+            )
+            row["updated_at"] = captured_at
+            product_rows.append(row)
         events_by_id = {
             event["event_id"]: event
             for product in products
@@ -145,6 +170,29 @@ class SupabaseRepository:
         }
         self._upsert("wedrop_products", product_rows, "product_id")
         self._upsert("wedrop_stock_events", list(events_by_id.values()), "event_id")
+
+    def _fetch_first_seen_at(self, product_ids: list[str]) -> dict[str, str]:
+        """Preserva a primeira data registrada antes do upsert do produto."""
+        if not product_ids:
+            return {}
+        response = self.session.get(
+            f"{self.base_url}/wedrop_products",
+            params={
+                "select": f"product_id,{FIRST_SEEN_FIELD}",
+                "product_id": f"in.({','.join(product_ids)})",
+            },
+            timeout=self.timeout,
+        )
+        if not response.ok:
+            raise RuntimeError(
+                f"Supabase não respondeu a consulta de {FIRST_SEEN_FIELD} "
+                f"(HTTP {response.status_code}): {response.text[:500]}"
+            )
+        return {
+            str(row["product_id"]): row[FIRST_SEEN_FIELD]
+            for row in response.json()
+            if row.get("product_id") and row.get(FIRST_SEEN_FIELD)
+        }
 
     def fetch_snapshot(self) -> dict[str, list[dict[str, Any]]]:
         """Lê categorias, produtos e movimentações inteiras (para o painel)."""

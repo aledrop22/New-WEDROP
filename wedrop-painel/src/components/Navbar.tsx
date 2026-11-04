@@ -1,5 +1,5 @@
 import React from 'react';
-import { Database, RefreshCw, Settings, Download, ExternalLink, Zap, BarChart2, Tag, LayoutGrid } from 'lucide-react';
+import { RefreshCw, Settings, Download, Zap, BarChart2, Tag, LayoutGrid, PackagePlus } from 'lucide-react';
 import { DataSourceConfig, ThemeId, AccentId, DashboardViewMode } from '../types/wedrop';
 import { ThemeSelector } from './ThemeSelector';
 
@@ -107,6 +107,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               <LayoutGrid className="w-3.5 h-3.5 text-slate-400" />
               <span>Catálogo Geral</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => onChangeViewMode('new_products')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                viewMode === 'new_products'
+                  ? 'bg-card text-theme shadow-2xs'
+                  : 'text-muted hover:text-theme'
+              }`}
+            >
+              <PackagePlus className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Novos produtos</span>
+            </button>
           </div>
 
           {/* Right: Theme Switcher & Actions */}
@@ -183,6 +196,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             Catálogo Geral
+          </button>
+          <button
+            onClick={() => onChangeViewMode('new_products')}
+            className={`px-3 py-1 rounded-md font-bold whitespace-nowrap ${
+              viewMode === 'new_products' ? 'bg-accent text-white' : 'bg-card text-muted'
+            }`}
+          >
+            Novos produtos
           </button>
         </div>
       </div>

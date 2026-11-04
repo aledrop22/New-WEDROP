@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .fields import PRODUCT_DATA_FIELDS, PRODUCT_FIELDS
+from .fields import FIRST_SEEN_FIELD, PRODUCT_DATA_FIELDS, PRODUCT_FIELDS
 from .product_status import effective_status
 from .stock_events import make_event_records, parse_event_datetime
 
@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS products (
     length TEXT,
     description TEXT,
     number_sales TEXT,
+    price_changed_at TEXT,
+    first_seen_at TEXT,
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stock_events (
@@ -194,7 +196,15 @@ class SalesRepository:
         ]
         columns = ", ".join(PRODUCT_FIELDS)
         placeholders = ", ".join("?" for _ in PRODUCT_FIELDS)
-        update_columns = ", ".join(f"{field} = excluded.{field}" for field in PRODUCT_FIELDS[1:])
+        update_columns = ", ".join(
+            (
+                f"{FIRST_SEEN_FIELD} = COALESCE(NULLIF(excluded.{FIRST_SEEN_FIELD}, ''), "
+                f"NULLIF(products.{FIRST_SEEN_FIELD}, ''))"
+                if field == FIRST_SEEN_FIELD
+                else f"{field} = excluded.{field}"
+            )
+            for field in PRODUCT_FIELDS[1:]
+        )
         self.connection.executemany(
             f"""
             INSERT INTO products ({columns}) VALUES ({placeholders})
@@ -213,6 +223,24 @@ class SalesRepository:
             """,
             events,
         )
+        self.connection.commit()
+        self._set_first_seen_at(products, captured_at)
+
+    def _set_first_seen_at(self, products: list[dict[str, Any]], captured_at: str) -> None:
+        """Define first_seen_at apenas para produtos que ainda não têm esse campo."""
+        for product in products:
+            product_id = product.get("product_id")
+            if not product_id:
+                continue
+            existing = self.connection.execute(
+                "SELECT first_seen_at FROM products WHERE product_id = ?", (product_id,)
+            ).fetchone()
+            if existing and existing["first_seen_at"]:
+                continue
+            self.connection.execute(
+                "UPDATE products SET first_seen_at = ? WHERE product_id = ?",
+                (captured_at, product_id),
+            )
         self.connection.commit()
 
     # ---- consultas do dashboard ------------------------------------------
@@ -465,6 +493,142 @@ class SalesRepository:
 
     def product_count(self) -> int:
         return int(self.connection.execute("SELECT COUNT(*) FROM products").fetchone()[0])
+
+    def new_products_for_period(self, start_day: date, end_day: date) -> list[sqlite3.Row]:
+        """Produtos que foram vistos pela primeira vez no período."""
+        start_at, end_at = _checked_range(start_day, end_day)
+        return self._rows(
+            """
+            SELECT p.product_id, p.name, p.category, p.url, p.sku, p.price,
+                   p.stock, p.first_seen_at, p.updated_at,
+                   COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_sold,
+                   COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_restocked
+            FROM products AS p
+            LEFT JOIN stock_events AS e
+                   ON e.product_id = p.product_id
+                  AND e.event_at >= ?
+                  AND e.event_at < ?
+            WHERE p.first_seen_at >= ? AND p.first_seen_at < ?
+            GROUP BY p.product_id, p.name, p.category, p.url, p.sku, p.price,
+                     p.stock, p.first_seen_at, p.updated_at
+            ORDER BY p.first_seen_at DESC, p.name COLLATE NOCASE
+            """,
+            (start_at, end_at, start_at, end_at),
+        )
+
+    def new_products_with_sales_for_period(self, start_day: date, end_day: date) -> list[sqlite3.Row]:
+        """Produtos novos no período que tiveram vendas (qualquer dia)."""
+        start_at, end_at = _checked_range(start_day, end_day)
+        return self._rows(
+            """
+            SELECT p.product_id, p.name, p.category, p.url, p.sku, p.price,
+                   p.stock, p.first_seen_at, p.updated_at,
+                   COALESCE(SUM(CASE WHEN e.event_kind = 'sale'
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_sold,
+                   COALESCE(SUM(CASE WHEN e.event_kind = 'stock_in'
+                                     THEN ABS(e.quantity) ELSE 0 END), 0) AS units_restocked
+            FROM products AS p
+            LEFT JOIN stock_events AS e
+                   ON e.product_id = p.product_id
+            WHERE p.first_seen_at >= ? AND p.first_seen_at < ?
+            GROUP BY p.product_id, p.name, p.category, p.url, p.sku, p.price,
+                     p.stock, p.first_seen_at, p.updated_at
+            HAVING SUM(CASE WHEN e.event_kind = 'sale' THEN ABS(e.quantity) ELSE 0 END) > 0
+            ORDER BY units_sold DESC, p.first_seen_at DESC, p.name COLLATE NOCASE
+            """,
+            (start_at, end_at),
+        )
+
+    def new_products_without_sales_for_period(self, start_day: date, end_day: date) -> list[sqlite3.Row]:
+        """Produtos novos no período que ainda não tiveram vendas."""
+        start_at, end_at = _checked_range(start_day, end_day)
+        return self._rows(
+            """
+            SELECT p.product_id, p.name, p.category, p.url, p.sku, p.price,
+                   p.stock, p.first_seen_at, p.updated_at
+            FROM products AS p
+            WHERE p.first_seen_at >= ? AND p.first_seen_at < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM stock_events AS e
+                  WHERE e.product_id = p.product_id AND e.event_kind = 'sale'
+              )
+            ORDER BY p.first_seen_at DESC, p.name COLLATE NOCASE
+            """,
+            (start_at, end_at),
+        )
+
+    def new_products_with_daily_sales(self, start_day: date, end_day: date) -> list[sqlite3.Row]:
+        """Produtos novos no período com vendas detalhadas por dia."""
+        start_at, end_at = _checked_range(start_day, end_day)
+        return self._rows(
+            """
+            WITH new_products AS (
+                SELECT product_id, name, category, url, sku, price, stock, first_seen_at
+                FROM products
+                WHERE first_seen_at >= ? AND first_seen_at < ?
+            ),
+            daily_sales AS (
+                SELECT
+                    p.product_id,
+                    substr(e.event_at, 1, 10) AS sale_day,
+                    SUM(ABS(e.quantity)) AS daily_units_sold
+                FROM new_products AS p
+                LEFT JOIN stock_events AS e ON e.product_id = p.product_id
+                WHERE e.event_kind = 'sale'
+                GROUP BY p.product_id, substr(e.event_at, 1, 10)
+            )
+            SELECT
+                p.product_id,
+                p.name,
+                p.category,
+                p.url,
+                p.sku,
+                p.price,
+                p.stock,
+                p.first_seen_at,
+                COALESCE(SUM(d.daily_units_sold), 0) AS total_units_sold,
+                GROUP_CONCAT(
+                    CASE WHEN d.daily_units_sold > 0
+                    THEN strftime('%d/%m', d.sale_day) || ':' || d.daily_units_sold
+                    END,
+                    ', '
+                ) AS sales_by_day
+            FROM new_products AS p
+            LEFT JOIN daily_sales AS d ON p.product_id = d.product_id
+            GROUP BY p.product_id, p.name, p.category, p.url, p.sku, p.price, p.stock, p.first_seen_at
+            HAVING total_units_sold > 0
+            ORDER BY total_units_sold DESC, p.first_seen_at DESC, p.name COLLATE NOCASE
+            """,
+            (start_at, end_at),
+        )
+
+    def new_products_detailed_sales(self, start_day: date, end_day: date) -> list[sqlite3.Row]:
+        """Produtos novos com vendas detalhadas por dia (formato para gráfico)."""
+        start_at, end_at = _checked_range(start_day, end_day)
+        return self._rows(
+            """
+            SELECT
+                p.product_id,
+                p.name,
+                p.category,
+                p.url,
+                p.sku,
+                p.price,
+                p.stock,
+                p.first_seen_at,
+                substr(e.event_at, 1, 10) AS sale_day,
+                SUM(ABS(e.quantity)) AS daily_units_sold
+            FROM products AS p
+            LEFT JOIN stock_events AS e ON e.product_id = p.product_id
+            WHERE p.first_seen_at >= ? AND p.first_seen_at < ?
+              AND e.event_kind = 'sale'
+            GROUP BY p.product_id, p.name, p.category, p.url, p.sku, p.price, p.stock, p.first_seen_at, substr(e.event_at, 1, 10)
+            ORDER BY p.first_seen_at DESC, sale_day, p.name COLLATE NOCASE
+            """,
+            (start_at, end_at),
+        )
 
     def categories(self) -> list[sqlite3.Row]:
         return self._rows(

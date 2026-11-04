@@ -23,6 +23,8 @@ export interface ProductRecord {
   was_active_yesterday?: boolean;
   /** Quando o preço mudou na última coleta que o viu mudar (o preço anterior não é guardado). */
   price_changed_at?: string | null;
+  /** Primeira identificação registrada pelo scraper. */
+  first_seen_at?: string | null;
   supplier: string | null;
   cnpj: string | null;
   origin_state: string | null;
@@ -114,6 +116,22 @@ export interface Product24hStats extends ProductRecord {
   priceComparison?: ProductPriceComparison;
 }
 
+export interface NewProductWithSales extends ProductRecord {
+  first_seen_at: string;
+  days_since_first_seen: number;
+  units_sold_since_first_seen: number;
+  last_sale_at: string | null;
+}
+
+export interface NewProductsData {
+  totalAvailable: number;
+  products: NewProductWithSales[];
+  soldProducts: number;
+  unsoldProducts: number;
+  unitsSoldSinceEntry: number;
+  missingFirstSeenCount: number;
+}
+
 export interface Category24hComparison {
   name: string;
   category_url?: string;
@@ -170,4 +188,5 @@ export type DashboardViewMode =
   | 'decision_24h'
   | 'day_comparison'
   | 'price_alerts'
-  | 'full_catalog';
+  | 'full_catalog'
+  | 'new_products';

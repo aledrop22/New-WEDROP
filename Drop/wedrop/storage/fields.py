@@ -5,8 +5,10 @@ from __future__ import annotations
 UPDATED_AT = "updated_at"
 # Quando o preço mudou em relação à coleta anterior (o preço antigo não é guardado).
 PRICE_ALERT_FIELD = "price_changed_at"
+# Data da primeira vez que o produto foi visto (não muda depois de definido).
+FIRST_SEEN_FIELD = "first_seen_at"
 # Campos de data que aceitam vazio: vazio vira NULL no Supabase.
-NULLABLE_TIMESTAMP_FIELDS: tuple[str, ...] = (PRICE_ALERT_FIELD,)
+NULLABLE_TIMESTAMP_FIELDS: tuple[str, ...] = (PRICE_ALERT_FIELD, FIRST_SEEN_FIELD)
 
 # Campos do produto, sem o carimbo de data da gravação.
 PRODUCT_DATA_FIELDS: tuple[str, ...] = (
@@ -33,6 +35,7 @@ PRODUCT_DATA_FIELDS: tuple[str, ...] = (
     "description",
     "number_sales",
     PRICE_ALERT_FIELD,
+    FIRST_SEEN_FIELD,
 )
 
 PRODUCT_FIELDS: tuple[str, ...] = (*PRODUCT_DATA_FIELDS, UPDATED_AT)
