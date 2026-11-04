@@ -80,6 +80,36 @@ class StorageTests(unittest.TestCase):
             ("SKU-123", "15", "12", "Descrição do produto", "2026-10-10T16:00:00"),
         )
 
+    def test_existing_product_without_first_seen_stays_in_baseline(self):
+        repository = SalesRepository(":memory:")
+        self.addCleanup(repository.close)
+        product = {
+            "product_id": "existing",
+            "name": "Produto da base",
+            "category": "Casa",
+            "url": "https://example.com/products/existing",
+        }
+        repository.save_products([product], "2026-10-10T12:00:00")
+        repository.connection.execute(
+            "UPDATE products SET first_seen_at = NULL WHERE product_id = ?",
+            ("existing",),
+        )
+        repository.connection.commit()
+
+        repository.save_products([product], "2026-10-11T12:00:00")
+        repository.save_products(
+            [{**product, "product_id": "new", "name": "Produto novo"}],
+            "2026-10-11T12:00:00",
+        )
+
+        first_seen = dict(
+            repository.connection.execute(
+                "SELECT product_id, first_seen_at FROM products"
+            ).fetchall()
+        )
+        self.assertIsNone(first_seen["existing"])
+        self.assertEqual(first_seen["new"], "2026-10-11T12:00:00")
+
     def test_period_activity_aggregates_inclusive_dates_by_category_and_product(self):
         temp_dir = self.enterContext(tempfile.TemporaryDirectory())
         repository = SalesRepository(Path(temp_dir) / "report.db")
@@ -343,7 +373,8 @@ class StorageTests(unittest.TestCase):
         existing_products_response = Mock(spec=requests.Response)
         existing_products_response.ok = True
         existing_products_response.json.return_value = [
-            {"product_id": "321", "first_seen_at": "2026-10-01T12:00:00+00:00"}
+            {"product_id": "321", "first_seen_at": "2026-10-01T12:00:00+00:00"},
+            {"product_id": "654", "first_seen_at": None},
         ]
         product = {
             "product_id": "321",
@@ -375,4 +406,39 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(product_payload[0]["first_seen_at"], "2026-10-01T12:00:00+00:00")
         self.assertEqual(len(history_payload), 1)
         self.assertEqual(history_payload[0]["event_kind"], "sale")
+        repository.close()
+
+    def test_supabase_preserves_baseline_null_and_dates_new_product(self):
+        repository = SupabaseRepository("https://example.supabase.co", "test-key")
+        existing_response = Mock(spec=requests.Response)
+        existing_response.ok = True
+        existing_response.json.return_value = [
+            {"product_id": "old", "first_seen_at": None}
+        ]
+        successful_response = Mock(spec=requests.Response)
+        successful_response.ok = True
+        products = [
+            {
+                "product_id": product_id,
+                "name": product_id,
+                "category": "Casa",
+                "url": f"https://example.com/products/{product_id}",
+            }
+            for product_id in ("old", "new")
+        ]
+
+        with patch.object(repository.session, "get", return_value=existing_response):
+            with patch.object(
+                repository.session, "post", return_value=successful_response
+            ) as post:
+                repository.save_products(products, "2026-10-11T12:00:00+00:00")
+
+        payload = post.call_args_list[0].kwargs["json"]
+        first_seen_by_id = {
+            row["product_id"]: row["first_seen_at"] for row in payload
+        }
+        self.assertIsNone(first_seen_by_id["old"])
+        self.assertEqual(
+            first_seen_by_id["new"], "2026-10-11T12:00:00+00:00"
+        )
         repository.close()

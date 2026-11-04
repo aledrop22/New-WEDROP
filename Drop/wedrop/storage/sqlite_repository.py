@@ -190,10 +190,23 @@ class SalesRepository:
         self.connection.commit()
 
     def save_products(self, products: list[dict[str, Any]], captured_at: str) -> None:
-        product_values = [
-            tuple(product.get(field, "") for field in PRODUCT_DATA_FIELDS) + (captured_at,)
-            for product in products
-        ]
+        product_values = []
+        for product in products:
+            product_id = product.get("product_id")
+            exists = bool(
+                product_id
+                and self.connection.execute(
+                    "SELECT 1 FROM products WHERE product_id = ?", (product_id,)
+                ).fetchone()
+            )
+            values = dict(product)
+            values[FIRST_SEEN_FIELD] = (
+                product.get(FIRST_SEEN_FIELD)
+                or (None if exists else captured_at)
+            )
+            product_values.append(
+                tuple(values.get(field, "") for field in PRODUCT_DATA_FIELDS) + (captured_at,)
+            )
         columns = ", ".join(PRODUCT_FIELDS)
         placeholders = ", ".join("?" for _ in PRODUCT_FIELDS)
         update_columns = ", ".join(
@@ -223,24 +236,6 @@ class SalesRepository:
             """,
             events,
         )
-        self.connection.commit()
-        self._set_first_seen_at(products, captured_at)
-
-    def _set_first_seen_at(self, products: list[dict[str, Any]], captured_at: str) -> None:
-        """Define first_seen_at apenas para produtos que ainda não têm esse campo."""
-        for product in products:
-            product_id = product.get("product_id")
-            if not product_id:
-                continue
-            existing = self.connection.execute(
-                "SELECT first_seen_at FROM products WHERE product_id = ?", (product_id,)
-            ).fetchone()
-            if existing and existing["first_seen_at"]:
-                continue
-            self.connection.execute(
-                "UPDATE products SET first_seen_at = ? WHERE product_id = ?",
-                (captured_at, product_id),
-            )
         self.connection.commit()
 
     # ---- consultas do dashboard ------------------------------------------

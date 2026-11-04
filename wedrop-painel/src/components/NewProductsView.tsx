@@ -80,8 +80,8 @@ export const NewProductsView: React.FC<NewProductsViewProps> = ({
 
       {data.missingFirstSeenCount > 0 && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs font-medium text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
-          {formatInt(data.missingFirstSeenCount)} produtos disponíveis ainda não têm data de primeira identificação.
-          Execute a migração de first_seen_at no Supabase e aguarde a próxima coleta para incluí-los no acompanhamento.
+          {formatInt(data.missingFirstSeenCount)} produtos disponíveis já faziam parte da base antes do início do rastreamento.
+          Como não há histórico confiável da entrada deles, não são contados como novos. As novas inserções serão registradas pela coleta.
         </div>
       )}
 

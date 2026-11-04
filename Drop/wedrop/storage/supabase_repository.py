@@ -152,15 +152,18 @@ class SupabaseRepository:
                 if product.get("product_id")
             )
         )
-        existing_first_seen = self._fetch_first_seen_at(product_ids)
+        existing_products = self._fetch_first_seen_at(product_ids)
         product_rows = []
         for product in products:
             row = {field: _column_value(product, field) for field in PRODUCT_DATA_FIELDS}
-            row[FIRST_SEEN_FIELD] = (
-                product.get(FIRST_SEEN_FIELD)
-                or existing_first_seen.get(str(product.get("product_id")))
-                or captured_at
-            )
+            product_id = str(product.get("product_id"))
+            if product_id in existing_products:
+                row[FIRST_SEEN_FIELD] = (
+                    existing_products[product_id]
+                    or product.get(FIRST_SEEN_FIELD)
+                )
+            else:
+                row[FIRST_SEEN_FIELD] = product.get(FIRST_SEEN_FIELD) or captured_at
             row["updated_at"] = captured_at
             product_rows.append(row)
         events_by_id = {
@@ -171,8 +174,8 @@ class SupabaseRepository:
         self._upsert("wedrop_products", product_rows, "product_id")
         self._upsert("wedrop_stock_events", list(events_by_id.values()), "event_id")
 
-    def _fetch_first_seen_at(self, product_ids: list[str]) -> dict[str, str]:
-        """Preserva a primeira data registrada antes do upsert do produto."""
+    def _fetch_first_seen_at(self, product_ids: list[str]) -> dict[str, str | None]:
+        """Retorna IDs existentes para distinguir a base atual de novas inserções."""
         if not product_ids:
             return {}
         response = self.session.get(
@@ -191,7 +194,7 @@ class SupabaseRepository:
         return {
             str(row["product_id"]): row[FIRST_SEEN_FIELD]
             for row in response.json()
-            if row.get("product_id") and row.get(FIRST_SEEN_FIELD)
+            if row.get("product_id")
         }
 
     def fetch_snapshot(self) -> dict[str, list[dict[str, Any]]]:
