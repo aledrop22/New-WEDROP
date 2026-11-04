@@ -17,7 +17,7 @@ begin
     ) then
         update public.wedrop_products
         set first_seen_at = null
-        where first_seen_at = updated_at;
+        where first_seen_at is not null;
 
         insert into public.wedrop_migrations (migration_key)
         values ('reset_first_seen_baseline_v1');
