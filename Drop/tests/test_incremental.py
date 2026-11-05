@@ -1,12 +1,21 @@
 """Coleta diária incremental: decisão por categoria, troca de registros e leitura de preço e saldo."""
 
+import asyncio
 import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from wedrop.mapping import MappingSummary, _full_read_reason, _ProductCrawler, _ProductsJsonFile, _refresh_category
+from wedrop.mapping import (
+    MappingSummary,
+    SupabaseUploadError,
+    _full_read_reason,
+    _ProductCrawler,
+    _ProductsJsonFile,
+    _refresh_category,
+    _sync_supabase_outbox,
+)
 from wedrop.scraping.catalog import Category, ListedProduct
 from wedrop.scraping.product_page import ProductJob
 from wedrop.scraping.product_record import (
@@ -322,6 +331,73 @@ class CrawlerRecordTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([product["leitura_categoria"] for product in sink.saved], ["1/3", "3/3"])
         self.assertRegex(sink.saved[0]["lido_em"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+
+class CrawlerFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_failure_cancels_and_waits_for_other_workers(self):
+        sibling_started = asyncio.Event()
+        sibling_stopped = asyncio.Event()
+
+        class Reader:
+            async def read(self, job):
+                if job.product_id == "1":
+                    await sibling_started.wait()
+                    return {"product_id": "1"}
+                sibling_started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    sibling_stopped.set()
+
+        class Sink:
+            def add(self, _product):
+                raise RuntimeError("falha ao salvar")
+
+            def flush(self):
+                pass
+
+        jobs = [
+            ProductJob(str(number), f"https://x/catalog/{number}", "Cozinha")
+            for number in (1, 2)
+        ]
+        crawler = _ProductCrawler([Reader(), Reader()], Sink(), relogin=None)
+
+        with self.assertRaisesRegex(RuntimeError, "falha ao salvar"):
+            await crawler.crawl(jobs)
+
+        self.assertTrue(sibling_stopped.is_set())
+
+
+class SupabaseOutboxTests(unittest.TestCase):
+    def test_failed_final_upload_keeps_local_queue_for_next_run(self):
+        repository = SalesRepository(":memory:")
+        self.addCleanup(repository.close)
+        repository.enqueue_supabase_products(
+            [{"product_id": "1"}],
+            "2026-11-05T06:00:00-03:00",
+        )
+        supabase = Mock()
+        supabase.save_products.side_effect = ConnectionError("remote disconnected")
+
+        with self.assertRaisesRegex(SupabaseUploadError, "fila local"):
+            _sync_supabase_outbox(repository, supabase)
+
+        self.assertEqual(len(repository.pending_supabase_uploads()), 1)
+
+    def test_final_upload_removes_each_locally_saved_batch(self):
+        repository = SalesRepository(":memory:")
+        self.addCleanup(repository.close)
+        repository.enqueue_supabase_products(
+            [{"product_id": "1"}],
+            "2026-11-05T06:00:00-03:00",
+        )
+        supabase = Mock()
+
+        _sync_supabase_outbox(repository, supabase)
+
+        supabase.validate.assert_called_once_with()
+        supabase.save_products.assert_called_once()
+        self.assertEqual(repository.pending_supabase_uploads(), [])
 
 
 class BaselineTests(unittest.TestCase):

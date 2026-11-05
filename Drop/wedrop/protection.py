@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 
 from .logs import configure_progress_logging, log_progress
-from .mapping import DataPaths, MappingOptions, MappingSummary, run_incremental
+from .mapping import DataPaths, MappingOptions, MappingSummary, SupabaseUploadError, run_incremental
 
 DEFAULT_ATTEMPTS = 3
 DEFAULT_PAUSE_SECONDS = 60
@@ -25,7 +25,12 @@ async def run_daily(
     options = MappingOptions(ask_for_credentials=False)
     for attempt in range(1, attempts + 1):
         log_progress(f"Tentativa {attempt}/{attempts}.")
-        summary = await _attempt(options, paths)
+        try:
+            summary = await _attempt(options, paths)
+        except SupabaseUploadError as exc:
+            log_progress(str(exc))
+            log_progress("A coleta não será repetida agora; execute novamente para reenviar a fila pendente.")
+            return False
         if summary is not None and summary.is_complete:
             log_progress("Coleta diária concluída.")
             return True
@@ -39,6 +44,8 @@ async def run_daily(
 async def _attempt(options: MappingOptions, paths: DataPaths) -> MappingSummary | None:
     try:
         return await run_incremental(options, paths)
+    except SupabaseUploadError:
+        raise
     except Exception as exc:  # qualquer falha vira nova tentativa, com o progresso preservado
         log_progress(f"Tentativa falhou: {type(exc).__name__}: {exc}")
         return None

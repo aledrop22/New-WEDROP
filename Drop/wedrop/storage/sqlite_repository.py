@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -62,6 +63,11 @@ CREATE INDEX IF NOT EXISTS stock_events_kind_date_idx
     ON stock_events (event_kind, event_at);
 CREATE INDEX IF NOT EXISTS stock_events_product_date_idx
     ON stock_events (product_id, event_at);
+CREATE TABLE IF NOT EXISTS supabase_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
 """
 
 # Situação do produto a partir do texto livre do campo is_active.
@@ -187,6 +193,43 @@ class SalesRepository:
             """,
             (category["url"], category["name"], category.get("count"), mapped_products, captured_at),
         )
+        self.connection.commit()
+
+    def enqueue_supabase_products(self, products: list[dict[str, Any]], captured_at: str) -> None:
+        self._enqueue_supabase(
+            "products",
+            {"products": products, "captured_at": captured_at},
+        )
+
+    def enqueue_supabase_category(
+        self, category: dict[str, Any], mapped_products: int, captured_at: str
+    ) -> None:
+        self._enqueue_supabase(
+            "category",
+            {
+                "category": category,
+                "mapped_products": mapped_products,
+                "captured_at": captured_at,
+            },
+        )
+
+    def _enqueue_supabase(self, kind: str, payload: dict[str, Any]) -> None:
+        self.connection.execute(
+            "INSERT INTO supabase_outbox (kind, payload) VALUES (?, ?)",
+            (kind, json.dumps(payload, ensure_ascii=False)),
+        )
+        self.connection.commit()
+
+    def pending_supabase_uploads(self) -> list[dict[str, Any]]:
+        return [
+            {"id": row["id"], "kind": row["kind"], "payload": json.loads(row["payload"])}
+            for row in self.connection.execute(
+                "SELECT id, kind, payload FROM supabase_outbox ORDER BY id"
+            )
+        ]
+
+    def remove_supabase_upload(self, upload_id: int) -> None:
+        self.connection.execute("DELETE FROM supabase_outbox WHERE id = ?", (upload_id,))
         self.connection.commit()
 
     def save_products(self, products: list[dict[str, Any]], captured_at: str) -> None:

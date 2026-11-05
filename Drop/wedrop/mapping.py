@@ -95,6 +95,10 @@ class MappingSummary:
         return not self.partial and not self.shortfall_categories and not self.failed_ids
 
 
+class SupabaseUploadError(RuntimeError):
+    """A coleta local terminou, mas a fila de envio ao Supabase continua pendente."""
+
+
 class _ProductsJsonFile:
     """data.json da coleta diária. Um produto relido substitui o registro antigo.
 
@@ -133,7 +137,7 @@ class _ProductsJsonFile:
 
 
 class _BatchSink:
-    """Grava cada lote no SQLite, no data.json e no Supabase, nessa ordem."""
+    """Grava cada lote localmente e registra o envio remoto para depois da coleta."""
 
     def __init__(
         self,
@@ -160,15 +164,47 @@ class _BatchSink:
             return
         batch, self._batch = self._batch, []
         self._repository.save_products(batch, self._captured_at)
+        if self._supabase is not None:
+            self._repository.enqueue_supabase_products(batch, self._captured_at)
         file_records = [products_file.file_record(product, self._captured_at) for product in batch]
         if self._products_json is None:
             products_file.append_records(self._paths.products_file, file_records)
         else:
             self._products_json.upsert(file_records)
-        if self._supabase is not None:
-            self._supabase.save_products(batch, self._captured_at)
-        destinations = "SQLite e data.json" + ("" if self._supabase is None else " e Supabase")
-        log_progress(f"Lote de {len(batch)} produtos gravado em {destinations}.")
+        log_progress(f"Lote de {len(batch)} produtos gravado localmente.")
+
+
+def _sync_supabase_outbox(repository: SalesRepository, supabase: SupabaseRepository) -> None:
+    pending = repository.pending_supabase_uploads()
+    if not pending:
+        log_progress("Nenhum dado pendente para enviar ao Supabase.")
+        return
+
+    log_progress(f"Iniciando envio ao Supabase: {len(pending)} lote(s) local(is) pendente(s).")
+    try:
+        supabase.validate()
+        for index, upload in enumerate(pending, 1):
+            payload = upload["payload"]
+            if upload["kind"] == "products":
+                supabase.save_products(payload["products"], payload["captured_at"])
+            elif upload["kind"] == "category":
+                supabase.save_category(
+                    payload["category"],
+                    payload["mapped_products"],
+                    payload["captured_at"],
+                )
+            else:
+                raise RuntimeError(f"Tipo de envio ao Supabase desconhecido: {upload['kind']}")
+            repository.remove_supabase_upload(upload["id"])
+            log_progress(f"Envio ao Supabase: lote {index}/{len(pending)} concluído.")
+    except Exception as exc:
+        remaining = len(repository.pending_supabase_uploads())
+        raise SupabaseUploadError(
+            f"A coleta local foi preservada, mas o envio ao Supabase falhou "
+            f"({remaining} lote(s) permanecem na fila local): {type(exc).__name__}: {exc}"
+        ) from exc
+
+    log_progress("Envio local ao Supabase concluído.")
 
 
 class _ProductCrawler:
@@ -196,9 +232,18 @@ class _ProductCrawler:
 
         while pending:
             session_lost = asyncio.Event()
-            await asyncio.gather(
-                *(self._work(reader, pending, failures, session_lost) for reader in self._readers)
-            )
+            workers = [
+                asyncio.create_task(self._work(reader, pending, failures, session_lost))
+                for reader in self._readers
+            ]
+            try:
+                await asyncio.gather(*workers)
+            except BaseException:
+                for worker in workers:
+                    if not worker.done():
+                        worker.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+                raise
             if session_lost.is_set():
                 relogins += 1
                 if relogins > MAX_RELOGINS_PER_CRAWL:
@@ -307,8 +352,6 @@ async def run_mapping(
     supabase = None
     if not options.local_only:
         supabase = SupabaseRepository.from_environment()
-        supabase.validate()
-        log_progress("Conexão e tabelas Supabase validadas.")
 
     state = None if options.is_partial else load_run_state(paths.state_file)
     resuming = _prepare_products_file(paths, options, state)
@@ -323,18 +366,23 @@ async def run_mapping(
     captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
     sink = _BatchSink(paths, repository, supabase, captured_at)
     try:
-        async with async_playwright() as playwright:
-            browser, context = await open_browser(playwright)
-            try:
-                await _map_catalog(context, options, paths, sink, repository, supabase, captured_at, summary)
-            finally:
-                await browser.close()
+        try:
+            async with async_playwright() as playwright:
+                browser, context = await open_browser(playwright)
+                try:
+                    await _map_catalog(context, options, paths, sink, repository, supabase, captured_at, summary)
+                finally:
+                    await browser.close()
+        finally:
+            sink.flush()
+        _finish(paths, summary)
+        if supabase is not None:
+            _sync_supabase_outbox(repository, supabase)
     finally:
         repository.close()
         if supabase is not None:
             supabase.close()
 
-    _finish(paths, summary)
     return summary
 
 
@@ -378,7 +426,7 @@ async def _map_catalog(
 
         repository.save_category(_as_dict(category), len(links), captured_at)
         if supabase is not None:
-            supabase.save_category(_as_dict(category), len(links), captured_at)
+            repository.enqueue_supabase_category(_as_dict(category), len(links), captured_at)
         log_progress(f"Categoria {category.name}: {len(links)} listados, {len(pending)} a ler.")
         if pending:
             failures = await crawler.crawl(pending)
@@ -431,8 +479,6 @@ async def run_incremental(
     supabase = None
     if not options.local_only:
         supabase = SupabaseRepository.from_environment()
-        supabase.validate()
-        log_progress("Conexão e tabelas Supabase validadas.")
 
     backup = products_file.backup_products_file(paths.products_file, paths.backup_dir)
     if backup is not None:
@@ -445,15 +491,20 @@ async def run_incremental(
     sink = _BatchSink(paths, repository, supabase, captured_at, products_json)
     summary = MappingSummary()
     try:
-        async with async_playwright() as playwright:
-            browser, context = await open_browser(playwright)
-            try:
-                await _refresh_catalog(context, options, products_json, sink, repository, supabase, captured_at, summary, paths)
-            finally:
-                await browser.close()
+        try:
+            async with async_playwright() as playwright:
+                browser, context = await open_browser(playwright)
+                try:
+                    await _refresh_catalog(context, options, products_json, sink, repository, supabase, captured_at, summary, paths)
+                finally:
+                    await browser.close()
+        finally:
+            sink.flush()
+            products_json.save()
+        _finish(paths, summary)
+        if supabase is not None:
+            _sync_supabase_outbox(repository, supabase)
     finally:
-        sink.flush()
-        products_json.save()
         repository.close()
         if supabase is not None:
             supabase.close()
@@ -462,7 +513,6 @@ async def run_incremental(
         f"Resumo: {len(summary.balance_only_categories)} categoria(s) só com preço e saldo; "
         f"{len(summary.full_categories)} lida(s) por inteiro."
     )
-    _finish(paths, summary)
     return summary
 
 
@@ -635,4 +685,4 @@ def _save_category(
 ) -> None:
     repository.save_category(_as_dict(category), mapped_products, captured_at)
     if supabase is not None:
-        supabase.save_category(_as_dict(category), mapped_products, captured_at)
+        repository.enqueue_supabase_category(_as_dict(category), mapped_products, captured_at)

@@ -178,24 +178,46 @@ class SupabaseRepository:
         """Retorna IDs existentes para distinguir a base atual de novas inserções."""
         if not product_ids:
             return {}
-        response = self.session.get(
-            f"{self.base_url}/wedrop_products",
-            params={
-                "select": f"product_id,{FIRST_SEEN_FIELD}",
-                "product_id": f"in.({','.join(product_ids)})",
-            },
-            timeout=self.timeout,
-        )
-        if not response.ok:
-            raise RuntimeError(
-                f"Supabase não respondeu a consulta de {FIRST_SEEN_FIELD} "
-                f"(HTTP {response.status_code}): {response.text[:500]}"
+        failure = ""
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                response = self.session.get(
+                    f"{self.base_url}/wedrop_products",
+                    params={
+                        "select": f"product_id,{FIRST_SEEN_FIELD}",
+                        "product_id": f"in.({','.join(product_ids)})",
+                    },
+                    timeout=self.timeout,
+                )
+            except requests.exceptions.RequestException as exc:
+                failure = f"falha de conexão: {exc}"
+            else:
+                if response.ok:
+                    return {
+                        str(row["product_id"]): row[FIRST_SEEN_FIELD]
+                        for row in response.json()
+                        if row.get("product_id")
+                    }
+                if response.status_code not in TRANSIENT_STATUS_CODES:
+                    raise RuntimeError(
+                        f"Supabase rejeitou consulta de {FIRST_SEEN_FIELD} "
+                        f"(HTTP {response.status_code}): {response.text[:500]}"
+                    )
+                failure = f"HTTP {response.status_code}: {response.text[:500]}"
+
+            if attempt == MAX_ATTEMPTS:
+                raise RuntimeError(
+                    f"Supabase continuou indisponível para consulta de {FIRST_SEEN_FIELD} "
+                    f"após {MAX_ATTEMPTS} tentativas ({failure})."
+                )
+            _logger.warning(
+                "Falha temporária ao consultar %s no Supabase (tentativa %s/%s): %s",
+                FIRST_SEEN_FIELD,
+                attempt,
+                MAX_ATTEMPTS,
+                failure,
             )
-        return {
-            str(row["product_id"]): row[FIRST_SEEN_FIELD]
-            for row in response.json()
-            if row.get("product_id")
-        }
+            time.sleep(3 ** (attempt - 1))
 
     def fetch_snapshot(self) -> dict[str, list[dict[str, Any]]]:
         """Lê categorias, produtos e movimentações inteiras (para o painel)."""

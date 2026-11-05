@@ -20,6 +20,33 @@ from wedrop.storage.supabase_repository import SupabaseRepository
 
 
 class StorageTests(unittest.TestCase):
+    def test_supabase_outbox_survives_reopen_until_upload_is_removed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            database = Path(folder) / "report.db"
+            repository = SalesRepository(database)
+            repository.enqueue_supabase_products(
+                [{"product_id": "123", "name": "Produto teste"}],
+                "2026-11-05T06:00:00-03:00",
+            )
+            repository.enqueue_supabase_category(
+                {"name": "Casa", "url": "https://example.com/casa", "count": 1},
+                1,
+                "2026-11-05T06:00:00-03:00",
+            )
+            first = repository.pending_supabase_uploads()
+            repository.close()
+
+            repository = SalesRepository(database)
+            pending = repository.pending_supabase_uploads()
+            self.assertEqual(pending, first)
+            self.assertEqual([item["kind"] for item in pending], ["products", "category"])
+            repository.remove_supabase_upload(pending[0]["id"])
+            self.assertEqual(
+                [item["kind"] for item in repository.pending_supabase_uploads()],
+                ["category"],
+            )
+            repository.close()
+
     def test_parses_date_formats_and_quantities(self):
         for value in ("10/10/2026 15:42:08", "2026-10-10T15:42:08"):
             parsed = parse_event_datetime(value)
@@ -343,6 +370,28 @@ class StorageTests(unittest.TestCase):
                     "wedrop_products", [{"product_id": "1"}], "product_id"
                 )
         self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(1)
+        repository.close()
+
+    def test_supabase_retries_first_seen_query_after_connection_error(self):
+        repository = SupabaseRepository("https://example.supabase.co", "test-key")
+        successful_response = Mock(spec=requests.Response)
+        successful_response.ok = True
+        successful_response.json.return_value = [
+            {"product_id": "1", "first_seen_at": "2026-10-01T12:00:00+00:00"}
+        ]
+        with patch.object(
+            repository.session,
+            "get",
+            side_effect=[requests.ConnectionError("remote disconnected"), successful_response],
+        ) as get:
+            with patch("wedrop.storage.supabase_repository.time.sleep") as sleep:
+                result = repository._fetch_first_seen_at(["1"])
+
+        self.assertEqual(
+            result, {"1": "2026-10-01T12:00:00+00:00"}
+        )
+        self.assertEqual(get.call_count, 2)
         sleep.assert_called_once_with(1)
         repository.close()
 

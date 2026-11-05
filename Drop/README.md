@@ -36,6 +36,8 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
   - Produto esgotado que a listagem mostra com selo **Indisponível** não é aberto (pulado). Quem está salvo como esgotado mas voltou ao selo **Disponível** é comparado e lido.
 - Produto já esgotado (Indisponível) não é relido. A quantidade do site conta os esgotados, então a reposição só é vista quando a categoria é lida por inteiro.
 - Se uma leitura de preço e saldo falhar, a categoria inteira é lida.
+- Os dados são gravados primeiro no SQLite e no `data.json`; só depois que a coleta termina a fila local é enviada ao Supabase.
+- Se o envio ao Supabase falhar, a coleta local fica preservada e os lotes pendentes permanecem no SQLite para serem reenviados na próxima execução.
 
 A coleta manual (`coletar`) continua completa.
 
