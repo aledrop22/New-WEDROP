@@ -27,6 +27,7 @@ import {
   ProductRecord,
 } from '../types/wedrop';
 import { formatInt } from '../utils/status';
+import { SortableTableHeader, nextTableSort, sortTableRows, TableSortState } from './SortableTableHeader';
 
 interface OverviewChartsProps {
   dailyActivity: DailyActivityRow[];
@@ -46,6 +47,7 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({
   onSelectProductForDetails,
 }) => {
   const [showAllDailyProducts, setShowAllDailyProducts] = useState(false);
+  const [dailySortState, setDailySortState] = useState<TableSortState | null>(null);
 
   // Categories moved
   const movedCategories = [...categorySummaries]
@@ -67,9 +69,22 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({
 
   // Days list for daily matrix
   const daysList = dailyActivity.map((d) => d.day);
+  const sortedDailyProducts = sortTableRows(topProductsDaily, dailySortState, (product, key) => {
+    switch (key) {
+      case 'name': return product.name;
+      case 'category': return product.category;
+      case 'total_sold': return product.total_sold;
+      case 'total_restocked': return product.total_restocked;
+      default:
+        return key.startsWith('day:')
+          ? product.daily_sales[key.slice(4)]
+          : null;
+    }
+  });
   const displayedDailyProducts = showAllDailyProducts
-    ? topProductsDaily
-    : topProductsDaily.slice(0, 20);
+    ? sortedDailyProducts
+    : sortedDailyProducts.slice(0, 20);
+  const handleDailySort = (key: string) => setDailySortState((current) => nextTableSort(current, key));
 
   return (
     <div className="space-y-8 mb-12">
@@ -299,14 +314,14 @@ export const OverviewCharts: React.FC<OverviewChartsProps> = ({
             <table className="w-full text-xs text-left">
               <thead className="bg-card-secondary text-muted uppercase font-semibold border-b border-theme sticky top-0 z-10">
                 <tr>
-                  <th className="px-3.5 py-2.5 min-w-[200px]">Produto</th>
-                  <th className="px-3 py-2.5">Categoria</th>
-                  <th className="px-3 py-2.5 text-right text-accent font-bold whitespace-nowrap">Vendido</th>
-                  <th className="px-3 py-2.5 text-right text-blue-600 dark:text-blue-400 font-bold whitespace-nowrap">Reposto</th>
+                  <SortableTableHeader sortKey="name" sortState={dailySortState} onSort={handleDailySort} className="px-3.5 py-2.5 min-w-[200px]">Produto</SortableTableHeader>
+                  <SortableTableHeader sortKey="category" sortState={dailySortState} onSort={handleDailySort} className="px-3 py-2.5">Categoria</SortableTableHeader>
+                  <SortableTableHeader sortKey="total_sold" sortState={dailySortState} onSort={handleDailySort} align="right" className="px-3 py-2.5 text-accent font-bold whitespace-nowrap">Vendido</SortableTableHeader>
+                  <SortableTableHeader sortKey="total_restocked" sortState={dailySortState} onSort={handleDailySort} align="right" className="px-3 py-2.5 text-blue-600 dark:text-blue-400 font-bold whitespace-nowrap">Reposto</SortableTableHeader>
                   {daysList.map((day) => (
-                    <th key={day} className="px-2.5 py-2.5 text-center font-mono whitespace-nowrap bg-card-secondary">
+                    <SortableTableHeader key={day} sortKey={`day:${day}`} sortState={dailySortState} onSort={handleDailySort} align="center" className="px-2.5 py-2.5 font-mono whitespace-nowrap bg-card-secondary">
                       {day.substring(8, 10)}/{day.substring(5, 7)}
-                    </th>
+                    </SortableTableHeader>
                   ))}
                   <th className="px-3 py-2.5 text-center">Link</th>
                 </tr>

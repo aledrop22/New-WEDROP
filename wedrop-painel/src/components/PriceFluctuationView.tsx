@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Tag, ArrowDownRight, ArrowUpRight, ExternalLink, Search } from 'lucide-react';
 import { ProductPriceComparison } from '../types/wedrop';
 import { formatCurrency } from '../utils/status';
+import { SortableTableHeader, nextTableSort, sortTableRows, TableSortState } from './SortableTableHeader';
 
 interface PriceFluctuationViewProps {
   priceChangesUp: ProductPriceComparison[];
@@ -16,6 +17,7 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'down' | 'up'>('all');
   const [search, setSearch] = useState('');
+  const [sortState, setSortState] = useState<TableSortState | null>(null);
 
   const allItems = [
     ...priceChangesDown.map((i) => ({ ...i, type: 'down' as const })),
@@ -34,6 +36,20 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
       );
     }
     return true;
+  });
+  const handleSort = (key: string) => setSortState((current) => nextTableSort(current, key));
+  const sortedItems = sortTableRows(filtered, sortState, (item, key) => {
+    switch (key) {
+      case 'name': return item.product.name;
+      case 'category': return item.product.category;
+      case 'sku': return item.product.sku;
+      case 'previous_price': return item.previousPriceNum;
+      case 'current_price': return item.currentPriceNum;
+      case 'diff': return item.diff;
+      case 'percent': return item.percentChange;
+      case 'recommendation': return item.direction === 'down' ? 'Ganho de margem / criar oferta' : 'Ajustar preço de venda na loja';
+      default: return null;
+    }
   });
 
   return (
@@ -121,14 +137,14 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
           <table className="w-full text-xs text-left">
             <thead className="bg-card-secondary text-muted uppercase font-semibold border-b border-theme">
               <tr>
-                <th className="px-3.5 py-2.5">Produto</th>
-                <th className="px-3 py-2.5">Categoria</th>
-                <th className="px-3 py-2.5">SKU</th>
-                <th className="px-3 py-2.5 text-right">Preço Anterior</th>
-                <th className="px-3 py-2.5 text-right font-bold text-theme">Preço Atual</th>
-                <th className="px-3 py-2.5 text-right">Diferença (R$)</th>
-                <th className="px-3 py-2.5 text-center">Variação (%)</th>
-                <th className="px-3 py-2.5">Recomendação</th>
+                <SortableTableHeader sortKey="name" sortState={sortState} onSort={handleSort} className="px-3.5 py-2.5">Produto</SortableTableHeader>
+                <SortableTableHeader sortKey="category" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Categoria</SortableTableHeader>
+                <SortableTableHeader sortKey="sku" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">SKU</SortableTableHeader>
+                <SortableTableHeader sortKey="previous_price" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Preço Anterior</SortableTableHeader>
+                <SortableTableHeader sortKey="current_price" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5 font-bold text-theme">Preço Atual</SortableTableHeader>
+                <SortableTableHeader sortKey="diff" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Diferença (R$)</SortableTableHeader>
+                <SortableTableHeader sortKey="percent" sortState={sortState} onSort={handleSort} align="center" className="px-3 py-2.5">Variação (%)</SortableTableHeader>
+                <SortableTableHeader sortKey="recommendation" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Recomendação</SortableTableHeader>
                 <th className="px-3 py-2.5 text-center">Link Direto</th>
               </tr>
             </thead>
@@ -140,7 +156,7 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => {
+                sortedItems.map((item) => {
                   const isDrop = item.direction === 'down';
                   const isRise = item.direction === 'up';
 

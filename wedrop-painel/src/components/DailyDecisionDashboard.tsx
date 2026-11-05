@@ -335,7 +335,7 @@ export const DailyDecisionDashboard: React.FC<DailyDecisionDashboardProps> = ({
           <div>
             <h3 className="text-base font-bold text-theme">Categorias: vendas de ontem × hoje</h3>
             <p className="text-xs text-muted">
-              Todas as categorias do catálogo, da que mais vendeu hoje para a que menos vendeu. Quem não teve venda aparece zerado.
+              Produtos que venderam conta itens distintos com ao menos uma venda; vendas soma as unidades. Ontem e hoje consideram movimentações até o mesmo horário de corte. Categorias sem venda ficam zeradas e a ordem por vendas de hoje é fixa.
             </p>
           </div>
         </div>
@@ -346,10 +346,10 @@ export const DailyDecisionDashboard: React.FC<DailyDecisionDashboardProps> = ({
               <tr>
                 <th className="px-3 py-2.5 text-center w-12">#</th>
                 <th className="px-3.5 py-2.5">Categoria</th>
-                <th className="px-3 py-2.5 text-right">Produtos que venderam ontem</th>
-                <th className="px-3 py-2.5 text-right">Produtos que venderam hoje</th>
-                <th className="px-3 py-2.5 text-right text-muted">Vendas ontem</th>
-                <th className="px-3 py-2.5 text-right font-bold text-accent">Vendas hoje</th>
+                <th title="Quantidade de produtos distintos com pelo menos uma venda no período." className="px-3 py-2.5 text-right">Produtos que venderam ontem</th>
+                <th title="Quantidade de produtos distintos com pelo menos uma venda no período." className="px-3 py-2.5 text-right">Produtos que venderam hoje</th>
+                <th title="Soma das unidades vendidas no período." className="px-3 py-2.5 text-right text-muted">Vendas ontem</th>
+                <th title="Soma das unidades vendidas no período." className="px-3 py-2.5 text-right font-bold text-accent">Vendas hoje</th>
                 <th className="px-3 py-2.5 text-right">Variação</th>
                 <th className="px-3 py-2.5 text-right text-blue-600 dark:text-blue-400">Reposição hoje</th>
                 <th className="px-3 py-2.5 text-center">Ação</th>

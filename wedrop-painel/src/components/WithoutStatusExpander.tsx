@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertCircle, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { ProductRecord } from '../types/wedrop';
 import { formatInt, WITHOUT_STATUS_HELP, formatDateTimeBR } from '../utils/status';
+import { SortableTableHeader, nextTableSort, parseSortNumber, sortTableRows, TableSortState } from './SortableTableHeader';
 
 interface WithoutStatusExpanderProps {
   products: ProductRecord[];
@@ -13,8 +14,22 @@ export const WithoutStatusExpander: React.FC<WithoutStatusExpanderProps> = ({
   forceOpen = false,
 }) => {
   const [isOpen, setIsOpen] = useState(forceOpen);
+  const [sortState, setSortState] = useState<TableSortState | null>(null);
 
   if (products.length === 0) return null;
+
+  const handleSort = (key: string) => setSortState((current) => nextTableSort(current, key));
+  const sortedProducts = sortTableRows(products, sortState, (product, key) => {
+    switch (key) {
+      case 'id': return parseSortNumber(product.product_id);
+      case 'name': return product.name;
+      case 'category': return product.category;
+      case 'supplier': return product.supplier;
+      case 'stock': return parseSortNumber(product.stock);
+      case 'updated_at': return product.updated_at ? Date.parse(product.updated_at) : null;
+      default: return null;
+    }
+  });
 
   return (
     <div className="mb-6 border border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 rounded-lg overflow-hidden shadow-2xs">
@@ -45,17 +60,17 @@ export const WithoutStatusExpander: React.FC<WithoutStatusExpanderProps> = ({
             <table className="w-full text-xs text-left">
               <thead className="bg-card-secondary text-muted uppercase font-semibold border-b border-theme sticky top-0">
                 <tr>
-                  <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Produto</th>
-                  <th className="px-3 py-2">Categoria</th>
-                  <th className="px-3 py-2">Fornecedor</th>
-                  <th className="px-3 py-2 text-right">Estoque</th>
-                  <th className="px-3 py-2">Lido em</th>
+                  <SortableTableHeader sortKey="id" sortState={sortState} onSort={handleSort} className="px-3 py-2">ID</SortableTableHeader>
+                  <SortableTableHeader sortKey="name" sortState={sortState} onSort={handleSort} className="px-3 py-2">Produto</SortableTableHeader>
+                  <SortableTableHeader sortKey="category" sortState={sortState} onSort={handleSort} className="px-3 py-2">Categoria</SortableTableHeader>
+                  <SortableTableHeader sortKey="supplier" sortState={sortState} onSort={handleSort} className="px-3 py-2">Fornecedor</SortableTableHeader>
+                  <SortableTableHeader sortKey="stock" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2">Estoque</SortableTableHeader>
+                  <SortableTableHeader sortKey="updated_at" sortState={sortState} onSort={handleSort} className="px-3 py-2">Lido em</SortableTableHeader>
                   <th className="px-3 py-2 text-center">Ação</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-theme text-theme">
-                {products.map((p) => (
+                {sortedProducts.map((p) => (
                   <tr key={p.product_id} className="hover-bg">
                     <td className="px-3 py-2 font-mono text-[11px] text-muted">{p.product_id}</td>
                     <td className="px-3 py-2 font-medium text-theme max-w-xs truncate" title={p.name}>

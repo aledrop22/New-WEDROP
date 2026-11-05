@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ExternalLink, Search, Sparkles } from 'lucide-react';
 import { NewProductsData, NewProductWithSales, ProductRecord } from '../types/wedrop';
 import { formatCurrency, formatDateTimeBR, formatInt } from '../utils/status';
+import { SortableTableHeader, nextTableSort, parseSortNumber, sortTableRows, TableSortState } from './SortableTableHeader';
 
 const PERIOD_OPTIONS = [3, 7, 15, 20, 30, 60, 90, 120];
 const PAGE_SIZE = 20;
@@ -22,6 +23,7 @@ export const NewProductsView: React.FC<NewProductsViewProps> = ({
   const [search, setSearch] = useState('');
   const [salesFilter, setSalesFilter] = useState<'all' | 'sold' | 'unsold'>('all');
   const [page, setPage] = useState(1);
+  const [sortState, setSortState] = useState<TableSortState | null>(null);
 
   const filteredProducts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase('pt-BR');
@@ -34,8 +36,24 @@ export const NewProductsView: React.FC<NewProductsViewProps> = ({
     });
   }, [data.products, salesFilter, search]);
 
+  const handleSort = (key: string) => {
+    setSortState((current) => nextTableSort(current, key));
+    setPage(1);
+  };
+  const sortedProducts = sortTableRows(filteredProducts, sortState, (product, key) => {
+    switch (key) {
+      case 'name': return product.name;
+      case 'category': return product.category;
+      case 'first_seen': return Date.parse(product.first_seen_at);
+      case 'days': return product.days_since_first_seen;
+      case 'units_sold': return product.units_sold_since_first_seen;
+      case 'last_sale': return product.last_sale_at ? Date.parse(product.last_sale_at) : null;
+      case 'price': return parseSortNumber(product.price);
+      default: return null;
+    }
+  });
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE));
-  const paginatedProducts = filteredProducts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paginatedProducts = sortedProducts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <section className="space-y-5 mb-8">
@@ -135,13 +153,13 @@ export const NewProductsView: React.FC<NewProductsViewProps> = ({
           <table className="w-full min-w-[860px] text-left text-xs">
             <thead className="border-b border-theme bg-card-secondary uppercase text-muted">
               <tr>
-                <th className="px-4 py-3">Produto</th>
-                <th className="px-3 py-3">Categoria</th>
-                <th className="px-3 py-3">Identificado em</th>
-                <th className="px-3 py-3 text-right">Dias no catálogo</th>
-                <th className="px-3 py-3 text-right">Vendido desde a entrada</th>
-                <th className="px-3 py-3">Última venda</th>
-                <th className="px-3 py-3 text-right">Preço</th>
+                <SortableTableHeader sortKey="name" sortState={sortState} onSort={handleSort} className="px-4 py-3">Produto</SortableTableHeader>
+                <SortableTableHeader sortKey="category" sortState={sortState} onSort={handleSort} className="px-3 py-3">Categoria</SortableTableHeader>
+                <SortableTableHeader sortKey="first_seen" sortState={sortState} onSort={handleSort} className="px-3 py-3">Identificado em</SortableTableHeader>
+                <SortableTableHeader sortKey="days" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-3">Dias no catálogo</SortableTableHeader>
+                <SortableTableHeader sortKey="units_sold" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-3">Vendido desde a entrada</SortableTableHeader>
+                <SortableTableHeader sortKey="last_sale" sortState={sortState} onSort={handleSort} className="px-3 py-3">Última venda</SortableTableHeader>
+                <SortableTableHeader sortKey="price" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-3">Preço</SortableTableHeader>
               </tr>
             </thead>
             <tbody className="divide-y divide-theme text-theme">

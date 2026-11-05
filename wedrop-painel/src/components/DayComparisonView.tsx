@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   TrendingUp,
   Package,
@@ -20,6 +20,7 @@ import {
 } from 'recharts';
 import { Category24hComparison, Product24hStats } from '../types/wedrop';
 import { formatInt } from '../utils/status';
+import { SortableTableHeader, nextTableSort, sortTableRows, TableSortState } from './SortableTableHeader';
 
 interface DayComparisonViewProps {
   categoriesComparison: Category24hComparison[];
@@ -32,6 +33,20 @@ export const DayComparisonView: React.FC<DayComparisonViewProps> = ({
   topProducts,
   onSelectCategory,
 }) => {
+  const [sortState, setSortState] = useState<TableSortState | null>(null);
+  const handleSort = (key: string) => setSortState((current) => nextTableSort(current, key));
+  const sortedCategories = sortTableRows(categoriesComparison, sortState, (category, key) => {
+    switch (key) {
+      case 'name': return category.name;
+      case 'items_yesterday': return category.itemsCountYesterday;
+      case 'items_today': return category.itemsCountToday;
+      case 'items_diff': return category.itemsDiff;
+      case 'reason': return category.itemsReason;
+      case 'restock': return category.restockToday;
+      default: return null;
+    }
+  });
+
   // Chart data for categories sales comparison (Ontem vs Hoje)
   const salesChartData = categoriesComparison.map((c) => ({
     name: c.name,
@@ -97,17 +112,17 @@ export const DayComparisonView: React.FC<DayComparisonViewProps> = ({
           <table className="w-full text-xs text-left">
             <thead className="bg-card-secondary text-muted uppercase font-semibold border-b border-theme">
               <tr>
-                <th className="px-3.5 py-2.5">Categoria</th>
-                <th className="px-3 py-2.5 text-right">Produtos Ontem</th>
-                <th className="px-3 py-2.5 text-right font-bold text-theme">Produtos Hoje</th>
-                <th className="px-3 py-2.5 text-center">Variação Líquida</th>
-                <th className="px-3 py-2.5">Diagnóstico da Variação</th>
-                <th className="px-3 py-2.5 text-right text-blue-600 dark:text-blue-400">Reposições Hoje</th>
+                <SortableTableHeader sortKey="name" sortState={sortState} onSort={handleSort} className="px-3.5 py-2.5">Categoria</SortableTableHeader>
+                <SortableTableHeader sortKey="items_yesterday" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Produtos Ontem</SortableTableHeader>
+                <SortableTableHeader sortKey="items_today" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5 font-bold text-theme">Produtos Hoje</SortableTableHeader>
+                <SortableTableHeader sortKey="items_diff" sortState={sortState} onSort={handleSort} align="center" className="px-3 py-2.5">Variação Líquida</SortableTableHeader>
+                <SortableTableHeader sortKey="reason" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Diagnóstico da Variação</SortableTableHeader>
+                <SortableTableHeader sortKey="restock" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5 text-blue-600 dark:text-blue-400">Reposições Hoje</SortableTableHeader>
                 <th className="px-3 py-2.5 text-center">Ação</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-theme text-theme">
-              {categoriesComparison.map((c) => {
+              {sortedCategories.map((c) => {
                 const diff = c.itemsDiff;
                 const isUp = diff > 0;
                 const isDown = diff < 0;

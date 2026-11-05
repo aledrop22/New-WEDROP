@@ -20,6 +20,7 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { CategorySummary, ProductWithActivity, ProductRecord } from '../types/wedrop';
+import { SortableTableHeader, nextTableSort, parseSortNumber, sortTableRows, TableSortState } from './SortableTableHeader';
 import { formatInt, WITHOUT_STATUS_HELP } from '../utils/status';
 
 interface CategoryDetailViewProps {
@@ -40,6 +41,7 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('Todos');
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [sortState, setSortState] = useState<TableSortState | null>(null);
   const pageSize = 15;
 
   const filteredProducts = products.filter((p) => {
@@ -67,6 +69,25 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
     .filter((p) => p.units_sold > 0 || p.units_restocked > 0)
     .sort((a, b) => b.units_sold - a.units_sold || b.units_restocked - a.units_restocked);
 
+  const handleSort = (key: string) => {
+    setSortState((current) => nextTableSort(current, key));
+    setPage(1);
+  };
+  const sortedProducts = sortTableRows(filteredProducts, sortState, (product, key) => {
+    switch (key) {
+      case 'name': return product.name;
+      case 'sku': return product.sku;
+      case 'status': return product.status_bucket;
+      case 'price': return parseSortNumber(product.price);
+      case 'sold': return product.units_sold;
+      case 'restocked': return product.units_restocked;
+      case 'stock': return parseSortNumber(product.stock);
+      case 'real_balance': return parseSortNumber(product.real_balance);
+      case 'supplier': return product.supplier;
+      default: return null;
+    }
+  });
+
   const chartData = movedProducts.map((p) => ({
     name: p.name.length > 25 ? p.name.substring(0, 25) + '...' : p.name,
     fullName: p.name,
@@ -75,7 +96,7 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
   }));
 
   const totalPages = Math.ceil(filteredProducts.length / pageSize) || 1;
-  const paginatedProducts = filteredProducts.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedProducts = sortedProducts.slice((page - 1) * pageSize, page * pageSize);
 
   return (
     <div className="space-y-6 mb-8">
@@ -181,15 +202,15 @@ export const CategoryDetailView: React.FC<CategoryDetailViewProps> = ({
           <table className="w-full text-xs text-left">
             <thead className="bg-card-secondary text-muted uppercase font-semibold border-b border-theme">
               <tr>
-                <th className="px-3.5 py-2.5">Produto</th>
-                <th className="px-3 py-2.5">SKU</th>
-                <th className="px-3 py-2.5">Status</th>
-                <th className="px-3 py-2.5">Preço</th>
-                <th className="px-3 py-2.5 text-right text-accent font-bold">Vendido</th>
-                <th className="px-3 py-2.5 text-right text-blue-600 dark:text-blue-400 font-bold">Reposto</th>
-                <th className="px-3 py-2.5 text-right">Estoque</th>
-                <th className="px-3 py-2.5 text-right">Saldo Real</th>
-                <th className="px-3 py-2.5">Fornecedor</th>
+                <SortableTableHeader sortKey="name" sortState={sortState} onSort={handleSort} className="px-3.5 py-2.5">Produto</SortableTableHeader>
+                <SortableTableHeader sortKey="sku" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">SKU</SortableTableHeader>
+                <SortableTableHeader sortKey="status" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Status</SortableTableHeader>
+                <SortableTableHeader sortKey="price" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Preço</SortableTableHeader>
+                <SortableTableHeader sortKey="sold" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5 text-accent font-bold">Vendido</SortableTableHeader>
+                <SortableTableHeader sortKey="restocked" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5 text-blue-600 dark:text-blue-400 font-bold">Reposto</SortableTableHeader>
+                <SortableTableHeader sortKey="stock" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Estoque</SortableTableHeader>
+                <SortableTableHeader sortKey="real_balance" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Saldo Real</SortableTableHeader>
+                <SortableTableHeader sortKey="supplier" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Fornecedor</SortableTableHeader>
                 <th className="px-3 py-2.5 text-center">Ações</th>
               </tr>
             </thead>
