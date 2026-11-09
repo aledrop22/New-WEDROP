@@ -14,7 +14,6 @@ import {
   BarChart3,
   Layers,
   Minus,
-  Tag,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -28,20 +27,18 @@ import {
 } from 'recharts';
 import { Decision24hData } from '../services/dataService';
 import { Product24hStats, ProductRecord } from '../types/wedrop';
-import { formatDateTimeBR, formatInt } from '../utils/status';
+import { formatInt } from '../utils/status';
 
 interface DailyDecisionDashboardProps {
   decisionData: Decision24hData;
   onSelectCategory: (name: string) => void;
   onSelectProductForDetails: (product: ProductRecord) => void;
-  onNavigateToPrices: () => void;
 }
 
 export const DailyDecisionDashboard: React.FC<DailyDecisionDashboardProps> = ({
   decisionData,
   onSelectCategory,
   onSelectProductForDetails,
-  onNavigateToPrices,
 }) => {
   const {
     top20Products,
@@ -49,8 +46,8 @@ export const DailyDecisionDashboard: React.FC<DailyDecisionDashboardProps> = ({
     totals24h,
     restockedProducts,
     soldProducts,
-    priceAlerts,
   } = decisionData;
+  const changedPriceProductIds = new Set(decisionData.priceAlerts.map((alert) => alert.product.product_id));
 
   // Second Business Model View Toggle
   const [rankingModel, setRankingModel] = useState<'comparativo_grafico' | 'oportunidades_loja'>('comparativo_grafico');
@@ -442,59 +439,6 @@ export const DailyDecisionDashboard: React.FC<DailyDecisionDashboardProps> = ({
         </div>
       </div>
 
-      {/* Alertas de alteração de preço: ontem e hoje (o preço anterior não é guardado) */}
-      <div className="bg-card border border-theme rounded-xl p-5 shadow-xs space-y-3">
-        <div className="flex items-center justify-between border-b border-theme pb-2.5">
-          <div className="flex items-center gap-2">
-            <Tag className="w-4 h-4 text-amber-500" />
-            <h3 className="text-sm font-bold text-theme">Alertas de alteração de preço (ontem e hoje)</h3>
-          </div>
-          <span className="text-xs text-muted font-medium">{priceAlerts.length} produtos</span>
-        </div>
-        <p className="text-xs text-muted">
-          Mostra quais produtos tiveram o preço alterado na coleta e o preço atual. O preço anterior não é guardado.
-        </p>
-
-        {priceAlerts.length === 0 ? (
-          <div className="text-center py-6 text-xs text-muted">Nenhum preço foi alterado ontem ou hoje.</div>
-        ) : (
-          <div className="space-y-2 max-h-72 overflow-y-auto">
-            {priceAlerts.map((alert) => (
-              <div
-                key={alert.product.product_id}
-                className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-card-secondary border border-theme text-xs"
-              >
-                <div className="min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => onSelectProductForDetails(alert.product)}
-                    className="font-medium text-theme hover:text-accent truncate block text-left"
-                    title={alert.product.name}
-                  >
-                    {alert.product.name}
-                  </button>
-                  <span className="text-[11px] text-muted">
-                    {alert.product.category} · alterado {alert.day} · {formatDateTimeBR(alert.changedAt)}
-                  </span>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="block font-bold text-theme">{alert.product.price || '—'}</span>
-                  <a
-                    href={alert.product.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[10px] text-accent hover:underline inline-flex items-center gap-0.5"
-                  >
-                    <span>Abrir</span>
-                    <ExternalLink className="w-2.5 h-2.5" />
-                  </a>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Top 20 Best Sellers in Last 24 Hours with 2 Distinct Model Views */}
       <div className="bg-card border border-theme rounded-xl p-5 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-theme pb-3">
@@ -603,7 +547,14 @@ export const DailyDecisionDashboard: React.FC<DailyDecisionDashboardProps> = ({
                           </button>
                         </td>
                         <td className="px-3 py-2 font-semibold whitespace-nowrap">
-                          {p.price || '—'}
+                          <span className={changedPriceProductIds.has(p.product_id) ? 'text-amber-600 dark:text-amber-400' : ''}>
+                            {p.price || '—'}
+                          </span>
+                          {changedPriceProductIds.has(p.product_id) && (
+                            <span className="ml-1.5 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                              NOVO
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right font-bold text-accent whitespace-nowrap">
                           {formatInt(p.salesToday)} un.

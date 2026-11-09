@@ -94,15 +94,6 @@ export interface DataSourceConfig {
 }
 
 // 24H & Day Comparison Models
-export interface ProductPriceComparison {
-  product: ProductRecord;
-  previousPriceNum: number;
-  currentPriceNum: number;
-  diff: number;
-  percentChange: number;
-  direction: 'up' | 'down' | 'same';
-}
-
 export interface Product24hStats extends ProductRecord {
   salesToday: number;
   salesYesterday: number;
@@ -113,7 +104,6 @@ export interface Product24hStats extends ProductRecord {
   isTrending: boolean;
   isReactivated: boolean;
   isOutOfStockNow: boolean;
-  priceComparison?: ProductPriceComparison;
 }
 
 export interface NewProductWithSales extends ProductRecord {
@@ -187,6 +177,5 @@ export interface AccentOption {
 export type DashboardViewMode =
   | 'decision_24h'
   | 'day_comparison'
-  | 'price_alerts'
   | 'full_catalog'
   | 'new_products';

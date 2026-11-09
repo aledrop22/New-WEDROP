@@ -7,7 +7,6 @@ import {
   DailyActivityRow,
   TopProductDailyRow,
   DataSourceConfig,
-  ProductPriceComparison,
   Product24hStats,
   Category24hComparison,
   NewProductsData,
@@ -49,8 +48,6 @@ export interface Decision24hData {
   top20Products: Product24hStats[];
   priceAlerts: PriceAlertRow[];
   topCategories24h: Category24hComparison[];
-  priceChangesUp: ProductPriceComparison[];
-  priceChangesDown: ProductPriceComparison[];
   restockedProducts: Product24hStats[];
   reactivatedProducts: Product24hStats[];
   outOfStockProducts: Product24hStats[];
@@ -310,11 +307,11 @@ class DataService {
 
     // Process all products
     const productStatsList: Product24hStats[] = [];
-    const priceUp: ProductPriceComparison[] = [];
-    const priceDown: ProductPriceComparison[] = [];
     const restockedList: Product24hStats[] = [];
     const reactivatedList: Product24hStats[] = [];
     const outOfStockList: Product24hStats[] = [];
+    let totalPriceIncreases = 0;
+    let totalPriceDecreases = 0;
 
     for (const prod of this.products) {
       const sToday = todaySales.get(prod.product_id) || 0;
@@ -324,28 +321,10 @@ class DataService {
       const rToday = todayRestock.get(prod.product_id) || 0;
       const rYest = yestRestock.get(prod.product_id) || 0;
 
-      // Price comparison
-      let priceComparison: ProductPriceComparison | undefined;
       if (prod.price && prod.previous_price) {
-        const curNum = parsePriceNumber(prod.price);
-        const prevNum = parsePriceNumber(prod.previous_price);
-        if (curNum > 0 && prevNum > 0) {
-          const diff = curNum - prevNum;
-          const percent = ((curNum - prevNum) / prevNum) * 100;
-          const dir = diff > 0.05 ? 'up' : (diff < -0.05 ? 'down' : 'same');
-
-          priceComparison = {
-            product: prod,
-            previousPriceNum: prevNum,
-            currentPriceNum: curNum,
-            diff,
-            percentChange: percent,
-            direction: dir,
-          };
-
-          if (dir === 'up') priceUp.push(priceComparison);
-          else if (dir === 'down') priceDown.push(priceComparison);
-        }
+        const priceDiff = parsePriceNumber(prod.price) - parsePriceNumber(prod.previous_price);
+        if (priceDiff > 0.05) totalPriceIncreases += 1;
+        else if (priceDiff < -0.05) totalPriceDecreases += 1;
       }
 
       const isTrending = sToday >= 5 && (sPercent >= 30 || sYest === 0);
@@ -363,7 +342,6 @@ class DataService {
         isTrending,
         isReactivated,
         isOutOfStockNow: isOutOfStock,
-        priceComparison,
       };
 
       productStatsList.push(stat);
@@ -487,8 +465,6 @@ class DataService {
       top20Products,
       priceAlerts,
       topCategories24h: categories24hList,
-      priceChangesUp: priceUp.sort((a, b) => b.diff - a.diff),
-      priceChangesDown: priceDown.sort((a, b) => a.diff - b.diff),
       restockedProducts: restockedList.sort((a, b) => b.restockToday - a.restockToday),
       reactivatedProducts: reactivatedList,
       outOfStockProducts: outOfStockList,
@@ -499,8 +475,8 @@ class DataService {
         salesDiff,
         salesPercentChange,
         totalRestockedToday,
-        totalPriceIncreases: priceUp.length,
-        totalPriceDecreases: priceDown.length,
+        totalPriceIncreases,
+        totalPriceDecreases,
         totalReactivated: reactivatedList.length,
         totalOutOfStock: outOfStockList.length,
       },

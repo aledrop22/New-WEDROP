@@ -8,7 +8,6 @@ import { CategoryDetailView } from './components/CategoryDetailView';
 import { OverviewCharts } from './components/OverviewCharts';
 import { DailyDecisionDashboard } from './components/DailyDecisionDashboard';
 import { DayComparisonView } from './components/DayComparisonView';
-import { PriceFluctuationView } from './components/PriceFluctuationView';
 import { NewProductsView } from './components/NewProductsView';
 import { SettingsModal } from './components/SettingsModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
@@ -56,7 +55,7 @@ export function App() {
     localStorage.setItem(ACCENT_STORAGE_KEY, currentAccent);
   }, [currentAccent, currentTheme]);
 
-  // View Mode: 'decision_24h' (default), 'day_comparison', 'price_alerts', 'full_catalog'
+  // View Mode: 'decision_24h' (default), 'day_comparison', 'full_catalog'
   const [viewMode, setViewMode] = useState<DashboardViewMode>('decision_24h');
   const [newProductsPeriod, setNewProductsPeriod] = useState(30);
 
@@ -304,7 +303,6 @@ export function App() {
                   decisionData={decision24hData}
                   onSelectCategory={handleSelectCategoryFromView}
                   onSelectProductForDetails={setSelectedProductDetails}
-                  onNavigateToPrices={() => setViewMode('price_alerts')}
                 />
               )}
 
@@ -312,14 +310,6 @@ export function App() {
                 <DayComparisonView
                   categoriesComparison={decision24hData.topCategories24h}
                   topProducts={decision24hData.top20Products}
-                  onSelectCategory={handleSelectCategoryFromView}
-                />
-              )}
-
-              {viewMode === 'price_alerts' && (
-                <PriceFluctuationView
-                  priceChangesUp={decision24hData.priceChangesUp}
-                  priceChangesDown={decision24hData.priceChangesDown}
                   onSelectCategory={handleSelectCategoryFromView}
                 />
               )}

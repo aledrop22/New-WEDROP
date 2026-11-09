@@ -23,8 +23,8 @@ Supabase â†’ api/snapshot.ts (Vercel, chave de serviÃ§o no servidor) â�
 - **Categorias ranqueadas**: as 14 categorias por unidades vendidas, com o Top 5 numerado.
 - **Detalhe da categoria**: filtro por status (Todos, DisponÃ­veis, IndisponÃ­veis, Sem status), busca por nome, SKU, EAN ou fornecedor, tabela paginada e grÃ¡fico de vendas e reposiÃ§Ãµes por produto.
 - **GrÃ¡ficos gerais**: movimentaÃ§Ãµes por dia, movimentaÃ§Ãµes por categoria, 20 produtos mais vendidos no perÃ­odo e tabela dos 100 produtos com mais movimentaÃ§Ã£o, com volume por dia.
-- **DecisÃ£o 24h** (tela inicial): vendas de ontem Ã— hoje por categoria (quantos produtos venderam em cada dia), destaques de quem vende nos dois dias e de quem saiu sÃ³ hoje ou sÃ³ ontem, alertas de alteraÃ§Ã£o de preÃ§o de ontem e hoje, top 20 e reposiÃ§Ãµes.
-- **VisÃµes extras**: Comparativo D-1 vs D0 e PreÃ§os (alta/baixa). A visÃ£o de PreÃ§os fica vazia, porque o preÃ§o anterior nÃ£o Ã© guardado; os alertas de alteraÃ§Ã£o estÃ£o na DecisÃ£o 24h.
+- **DecisÃ£o 24h** (tela inicial): vendas de ontem Ã— hoje por categoria (quantos produtos venderam em cada dia), destaques de quem vende nos dois dias e de quem saiu sÃ³ hoje ou sÃ³ ontem, top 20 e reposiÃ§Ãµes. Quando um produto do ranking tem alteraÃ§Ã£o de preÃ§o registrada hoje ou ontem, a coluna **PreÃ§o** destaca o novo valor.
+- **VisÃ£o extra**: Comparativo D-1 vs D0.
 - **BotÃµes**: atualizar agora, exportar CSV, trocar tema e abrir o modal de conexÃ£o e status da leitura (sÃ³ leitura).
 
 ## VariÃ¡veis de ambiente (Vercel)
@@ -60,5 +60,4 @@ Consulte `supabase_schema.sql`:
 - `wedrop_categories`
 - `wedrop_products`
 - `wedrop_stock_events`
-
 
