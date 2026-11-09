@@ -44,12 +44,9 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="text-lg font-extrabold tracking-tight text-theme">
                   WeDrop <span className="text-accent">Monitor</span>
                 </span>
-                <span className="text-[10px] bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300 font-bold px-1.5 py-0.5 rounded uppercase">
-                  Depósito 24h
-                </span>
               </div>
               <p className="text-[11px] text-muted hidden sm:block">
-                Leitura noturna de catálogo, estoque e preços
+                Rastreabilidade de Vendas Diárias
               </p>
             </div>
           </div>
@@ -80,19 +77,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <BarChart2 className="w-3.5 h-3.5 text-blue-500" />
               <span>Comparativo D-1 vs D0</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onChangeViewMode('price_alerts')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'price_alerts'
-                  ? 'bg-card text-theme shadow-2xs'
-                  : 'text-muted hover:text-theme'
-              }`}
-            >
-              <Tag className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Preços (Alta/Baixa)</span>
             </button>
 
             <button
@@ -180,14 +164,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             }`}
           >
             Comparativo D-1 vs D0
-          </button>
-          <button
-            onClick={() => onChangeViewMode('price_alerts')}
-            className={`px-3 py-1 rounded-md font-bold whitespace-nowrap ${
-              viewMode === 'price_alerts' ? 'bg-accent text-white' : 'bg-card text-muted'
-            }`}
-          >
-            Preços
           </button>
           <button
             onClick={() => onChangeViewMode('full_catalog')}

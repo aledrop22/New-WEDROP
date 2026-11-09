@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Calendar, Filter, Layers, HelpCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Calendar, Filter, Layers, HelpCircle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getLocalDateString, getPastDate, formatDateBR, CATEGORY_NAMES } from '../utils/status';
 
 interface SidebarProps {
@@ -24,6 +24,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   dataSourceName,
 }) => {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const today = getLocalDateString();
   const yesterday = getPastDate(1);
   const sevenDaysAgo = getPastDate(7);
@@ -35,7 +36,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <aside className="w-full lg:w-64 xl:w-72 bg-card border-b lg:border-b-0 lg:border-r border-theme p-3 sm:p-4 shrink-0 transition-colors">
+    <aside
+      className={`w-full ${
+        isCollapsed ? 'lg:w-14 xl:w-14 lg:p-2' : 'lg:w-64 xl:w-72'
+      } bg-card border-b lg:border-b-0 lg:border-r border-theme p-3 sm:p-4 shrink-0 transition-all lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto lg:self-start lg:flex lg:flex-col`}
+    >
+      <div className={`hidden lg:flex mb-3 ${isCollapsed ? 'justify-center' : 'justify-end'}`}>
+        <button
+          type="button"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          aria-label={isCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+          aria-expanded={!isCollapsed}
+          title={isCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+          className="flex items-center justify-center w-8 h-8 rounded-lg bg-card-secondary border border-theme text-muted hover:text-theme transition-colors"
+        >
+          {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+        </button>
+      </div>
+
       {/* Mobile Toggle Bar */}
       <div className="lg:hidden flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
@@ -59,7 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Main Filter Content (collapsible on mobile, always visible on desktop) */}
-      <div className={`mt-3 lg:mt-0 flex-col gap-5 ${isMobileOpen ? 'flex' : 'hidden lg:flex'}`}>
+      <div className={`mt-3 lg:mt-0 flex-col gap-5 ${isMobileOpen ? 'flex' : 'hidden lg:flex'} ${isCollapsed ? 'lg:hidden' : ''}`}>
         {/* Período Section */}
         <div>
           <div className="flex items-center gap-2 text-theme font-bold text-sm mb-3">

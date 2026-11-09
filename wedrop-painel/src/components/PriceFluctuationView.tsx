@@ -142,6 +142,7 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
                 <SortableTableHeader sortKey="sku" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">SKU</SortableTableHeader>
                 <SortableTableHeader sortKey="previous_price" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Preço Anterior</SortableTableHeader>
                 <SortableTableHeader sortKey="current_price" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5 font-bold text-theme">Preço Atual</SortableTableHeader>
+                <th className="px-3 py-2.5 text-right font-bold text-theme">Preço</th>
                 <SortableTableHeader sortKey="diff" sortState={sortState} onSort={handleSort} align="right" className="px-3 py-2.5">Diferença (R$)</SortableTableHeader>
                 <SortableTableHeader sortKey="percent" sortState={sortState} onSort={handleSort} align="center" className="px-3 py-2.5">Variação (%)</SortableTableHeader>
                 <SortableTableHeader sortKey="recommendation" sortState={sortState} onSort={handleSort} className="px-3 py-2.5">Recomendação</SortableTableHeader>
@@ -151,7 +152,7 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
             <tbody className="divide-y divide-theme text-theme">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted">
+                  <td colSpan={10} className="px-4 py-8 text-center text-muted">
                     Nenhum produto encontrado com os filtros selecionados.
                   </td>
                 </tr>
@@ -185,6 +186,9 @@ export const PriceFluctuationView: React.FC<PriceFluctuationViewProps> = ({
                         {formatCurrency(item.previousPriceNum)}
                       </td>
                       <td className="px-3 py-2.5 text-right font-bold text-theme whitespace-nowrap text-sm">
+                        {formatCurrency(item.currentPriceNum)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-bold text-accent whitespace-nowrap text-sm">
                         {formatCurrency(item.currentPriceNum)}
                       </td>
                       <td className="px-3 py-2.5 text-right font-bold whitespace-nowrap">
