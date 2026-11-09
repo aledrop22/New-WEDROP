@@ -111,8 +111,13 @@ def parse_first_int(text: str) -> int | None:
 
 def _first_number(text: str) -> int | None:
     """Extrai o primeiro número com sinal do texto."""
-    match = re.search(r"([+-]?\d+)", text)
-    return int(match.group()) if match else None
+    match = re.search(r"([+-])\s*(\d+)|(\d+)", text)
+    if not match:
+        return None
+    if match.group(1):
+        number = int(match.group(2))
+        return number if match.group(1) == "+" else -number
+    return int(match.group(3))
 
 
 def _initial_balance(history: list[dict[str, Any]]) -> int:
