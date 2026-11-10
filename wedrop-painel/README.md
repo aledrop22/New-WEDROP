@@ -24,7 +24,7 @@ Supabase â†’ api/snapshot.ts (Vercel, chave de serviÃ§o no servidor) â�
 - **Detalhe da categoria**: filtro por status (Todos, DisponÃ­veis, IndisponÃ­veis, Sem status), busca por nome, SKU, EAN ou fornecedor, tabela paginada e grÃ¡fico de vendas e reposiÃ§Ãµes por produto.
 - **GrÃ¡ficos gerais**: movimentaÃ§Ãµes por dia, movimentaÃ§Ãµes por categoria, 20 produtos mais vendidos no perÃ­odo e tabela dos 100 produtos com mais movimentaÃ§Ã£o, com volume por dia.
 - **DecisÃ£o 24h** (tela inicial): vendas de ontem Ã— hoje por categoria (quantos produtos venderam em cada dia), destaques de quem vende nos dois dias e de quem saiu sÃ³ hoje ou sÃ³ ontem, top 20 e reposiÃ§Ãµes. Quando um produto do ranking tem alteraÃ§Ã£o de preÃ§o registrada hoje ou ontem, a coluna **PreÃ§o** destaca o novo valor.
-- **VisÃ£o extra**: Comparativo D-1 vs D0.
+- **VisÃ£o extra**: Comparativo D-1 vs D0, com itens ativos no catÃ¡logo por categoria e contagem de produtos distintos vendidos, repetidos entre os dias e links para os produtos.
 - **BotÃµes**: atualizar agora, exportar CSV, trocar tema e abrir o modal de conexÃ£o e status da leitura (sÃ³ leitura).
 
 ## VariÃ¡veis de ambiente (Vercel)
