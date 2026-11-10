@@ -102,7 +102,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <PackagePlus className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Novos produtos</span>
+              <span>Entradas e estoque</span>
             </button>
           </div>
 
@@ -179,7 +179,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               viewMode === 'new_products' ? 'bg-accent text-white' : 'bg-card text-muted'
             }`}
           >
-            Novos produtos
+            Entradas e estoque
           </button>
         </div>
       </div>

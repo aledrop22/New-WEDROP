@@ -27,6 +27,7 @@ REQUIRED_TABLES = {
     "wedrop_categories": "category_url",
     "wedrop_products": "product_id",
     "wedrop_stock_events": "event_id",
+    "wedrop_stock_snapshots": "observation_id",
 }
 
 _logger = logging.getLogger("wedrop.scraper")
@@ -173,6 +174,21 @@ class SupabaseRepository:
         }
         self._upsert("wedrop_products", product_rows, "product_id")
         self._upsert("wedrop_stock_events", list(events_by_id.values()), "event_id")
+
+    def save_stock_snapshots(self, snapshots: list[dict[str, Any]]) -> None:
+        self._upsert("wedrop_stock_snapshots", snapshots, "observation_id")
+
+    def delete_stock_snapshots_before(self, cutoff: str) -> None:
+        response = self.session.delete(
+            f"{self.base_url}/wedrop_stock_snapshots",
+            params={"observed_at": f"lt.{cutoff}"},
+            timeout=self.timeout,
+        )
+        if not response.ok:
+            raise RuntimeError(
+                "Supabase rejeitou a limpeza de observações de estoque expiradas "
+                f"(HTTP {response.status_code}): {response.text[:500]}"
+            )
 
     def _fetch_first_seen_at(self, product_ids: list[str]) -> dict[str, str | None]:
         """Retorna IDs existentes para distinguir a base atual de novas inserções."""

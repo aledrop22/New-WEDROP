@@ -57,10 +57,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const [categories, products, stockEvents] = await Promise.all([
+    const [categories, products, stockEvents, stockSnapshots] = await Promise.all([
       fetchTable(baseUrl, apiKey, 'wedrop_categories', 'category_url'),
       fetchTable(baseUrl, apiKey, 'wedrop_products', 'product_id'),
       fetchTable(baseUrl, apiKey, 'wedrop_stock_events', 'event_id'),
+      fetchTable(baseUrl, apiKey, 'wedrop_stock_snapshots', 'observation_id'),
     ]);
     // Mesmo tempo de vida do cache do Streamlit (5 min): a Vercel reaproveita a resposta nesse intervalo.
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=60');
@@ -68,6 +69,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       categories,
       products,
       stock_events: stockEvents,
+      stock_snapshots: stockSnapshots,
       fetched_at: new Date().toISOString(),
     });
   } catch (err) {

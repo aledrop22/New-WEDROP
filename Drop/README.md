@@ -26,9 +26,10 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
 `python -m wedrop diaria` não percorre o site inteiro. Antes de ler produtos, compara a quantidade de cada categoria (mostrada na página de categorias) com a última coleta, guardada na tabela `categories` do SQLite:
 
 - **Quantidade igual** e todos os produtos da categoria já no `data.json`: compara **preço e saldo** de cada produto com o dia anterior. A listagem da categoria não é percorrida.
-  - Preço e saldo iguais: nada é gravado, o registro fica como estava.
+  - Preço e saldo iguais: o produto não é atualizado, mas uma observação do saldo e da disponibilidade é registrada.
   - Só o preço mudou: grava o novo preço.
   - Saldo mudou: lê a aba **Histórico de Estoque** e grava as movimentações novas (vendas e entradas), que aparecem no painel.
+  - A disponibilidade também é comparada; mudanças de status são gravadas mesmo quando preço e saldo não mudam.
 - **Quantidade diferente**, categoria nunca coletada ou `data.json` com menos produtos que o site: percorre a **listagem inteira** da categoria para saber o que entrou e o que saiu.
   - Aumentou: produto novo (na listagem e ainda não salvo) é lido por inteiro.
   - Diminuiu: produto que acabou de sair da listagem esgotou. A página dele é lida por inteiro uma vez (últimas vendas no histórico e selo Indisponível), e ele continua salvo.
@@ -36,8 +37,11 @@ Credenciais ficam no `.env` (`WEDROP_EMAIL`, `WEDROP_PASSWORD`, `SUPABASE_URL`, 
   - Produto esgotado que a listagem mostra com selo **Indisponível** não é aberto (pulado). Quem está salvo como esgotado mas voltou ao selo **Disponível** é comparado e lido.
 - Produto já esgotado (Indisponível) não é relido. A quantidade do site conta os esgotados, então a reposição só é vista quando a categoria é lida por inteiro.
 - Se uma leitura de preço e saldo falhar, a categoria inteira é lida.
+- As observações de saldo/status são mantidas por até 7 dias. Em uma listagem completa, produtos que deixaram de aparecer são registrados como fora do catálogo; listagens incompletas não geram essa conclusão.
 - Os dados são gravados primeiro no SQLite e no `data.json`; só depois que a coleta termina a fila local é enviada ao Supabase.
 - Se o envio ao Supabase falhar, a coleta local fica preservada e os lotes pendentes permanecem no SQLite para serem reenviados na próxima execução.
+
+Antes de publicar a coleta ou o painel com esse acompanhamento, execute `Drop/add_stock_snapshots.sql` no SQL Editor do projeto Supabase. O histórico começa na primeira coleta após a migração; não há snapshots antigos para reconstruir.
 
 A coleta manual (`coletar`) continua completa.
 

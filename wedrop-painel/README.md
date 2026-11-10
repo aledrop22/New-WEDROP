@@ -40,6 +40,8 @@ Consulte `.env.example`. NÃ£o use prefixo `VITE_` nessas chaves.
 
 ## Publicar na Vercel
 
+Antes do primeiro deploy com o acompanhamento de estoque, execute `../Drop/add_stock_snapshots.sql` no SQL Editor do Supabase. O painel e o coletor passam a depender da tabela `wedrop_stock_snapshots`; o historico so comeca na primeira coleta depois da migracao.
+
 1. Em **Add New â†’ Project**, importe o repositÃ³rio.
 2. Em **Root Directory**, selecione `wedrop-painel` (a pasta que tem este README).
 3. Framework: **Vite**. Build: `npm run build`. Output: `dist`.
@@ -60,4 +62,4 @@ Consulte `supabase_schema.sql`:
 - `wedrop_categories`
 - `wedrop_products`
 - `wedrop_stock_events`
-
+- `wedrop_stock_snapshots`

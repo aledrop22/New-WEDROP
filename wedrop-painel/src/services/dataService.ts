@@ -11,6 +11,8 @@ import {
   Category24hComparison,
   NewProductsData,
   NewProductWithSales,
+  ProductStockMonitoring,
+  ProductStockSnapshot,
 } from '../types/wedrop';
 import {
   CATEGORY_NAMES,
@@ -21,7 +23,7 @@ import {
   getPastDate,
   parsePriceNumber,
 } from '../utils/status';
-import { APP_TIME_ZONE, clockLabel, eventDayKey, daysBetween, dayKeyFromDate, minutesOfDaySP, todayKey } from '../utils/dates';
+import { APP_TIME_ZONE, clockLabel, eventDayKey, daysBetween, dayKeyFromDate, minutesOfDaySP, shiftDayKey, todayKey } from '../utils/dates';
 
 const SNAPSHOT_URL = '/api/snapshot';
 
@@ -29,6 +31,7 @@ interface SnapshotResponse {
   categories: CategoryRecord[];
   products: ProductRecord[];
   stock_events: StockEventRecord[];
+  stock_snapshots: ProductStockSnapshot[];
   fetched_at: string;
 }
 
@@ -75,6 +78,15 @@ const byNameNoCase = (a: string, b: string) => {
   return left < right ? -1 : left > right ? 1 : 0;
 };
 
+const parseStockCount = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const normalized = value.replace(/[.,](?=\d{3}(?:\D|$))/g, '');
+  const match = normalized.match(/-?\d+(?:[.,]\d+)?/);
+  if (!match) return null;
+  const quantity = Number(match[0].replace(',', '.'));
+  return Number.isFinite(quantity) ? Math.trunc(quantity) : null;
+};
+
 /**
  * Dados do painel. Tudo vem do Supabase, lido pela função /api/snapshot no servidor.
  * As consultas seguem as do SalesRepository (Drop/wedrop/storage/sqlite_repository.py).
@@ -83,6 +95,7 @@ class DataService {
   private categories: CategoryRecord[] = [];
   private products: ProductRecord[] = [];
   private stockEvents: DatedStockEvent[] = [];
+  private stockSnapshots: ProductStockSnapshot[] = [];
   private config: DataSourceConfig = {
     lastFetchedAt: null,
     isConnected: false,
@@ -122,6 +135,7 @@ class DataService {
         const day = eventDayKey(evt.event_at, evt.event_at_raw);
         return day ? [{ ...evt, day }] : [];
       });
+      this.stockSnapshots = snapshot.stock_snapshots;
 
       const readAt = new Date(snapshot.fetched_at).toLocaleTimeString('pt-BR', {
         timeZone: APP_TIME_ZONE,
@@ -247,9 +261,83 @@ class DataService {
       );
 
     const soldProducts = products.filter((product) => product.units_sold_since_first_seen > 0).length;
+    const weekStart = shiftDayKey(today, -6);
+    const snapshotsByProduct = new Map<string, ProductStockSnapshot[]>();
+    const snapshotCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const snapshot of this.stockSnapshots) {
+      if (Date.parse(snapshot.observed_at) < snapshotCutoff) continue;
+      const history = snapshotsByProduct.get(snapshot.product_id) || [];
+      history.push(snapshot);
+      snapshotsByProduct.set(snapshot.product_id, history);
+    }
+    const salesLast7Days = new Map<string, { units: number; lastSaleAt: string | null }>();
+    for (const event of this.stockEvents) {
+      if (event.event_kind !== 'sale') continue;
+      const current = salesLast7Days.get(event.product_id) || { units: 0, lastSaleAt: null };
+      const eventAt = event.event_at || event.event_at_raw || null;
+      if (event.day >= weekStart && event.day <= today) {
+        current.units += event.quantity;
+      }
+      if (!current.lastSaleAt || (eventAt && Date.parse(eventAt) > Date.parse(current.lastSaleAt))) {
+        current.lastSaleAt = eventAt;
+      }
+      salesLast7Days.set(event.product_id, current);
+    }
+    const currentProducts = new Map(this.products.map((product) => [product.product_id, product]));
+    const stockMonitoring: ProductStockMonitoring[] = [];
+    for (const [productId, snapshots] of snapshotsByProduct) {
+      const product = currentProducts.get(productId);
+      if (!product) continue;
+      snapshots.sort((a, b) => Date.parse(a.observed_at) - Date.parse(b.observed_at));
+      const latest = snapshots[snapshots.length - 1];
+      const previous = snapshots.length > 1 ? snapshots[0] : null;
+      const currentStock = parseStockCount(latest.real_balance) ?? parseStockCount(latest.stock);
+      const previousStock = previous
+        ? parseStockCount(previous.real_balance) ?? parseStockCount(previous.stock)
+        : null;
+      const sales = salesLast7Days.get(productId) || { units: 0, lastSaleAt: null };
+      const status = getStatusBucket(latest.is_active, latest.availability);
+      const unavailable = latest.is_listed === false || status === 'Inativos' || currentStock === 0;
+      const hadRecentUnavailableSnapshot = snapshots.some((snapshot) =>
+        snapshot.is_listed === false ||
+        getStatusBucket(snapshot.is_active, snapshot.availability) === 'Inativos' ||
+        (parseStockCount(snapshot.real_balance) ?? parseStockCount(snapshot.stock)) === 0
+      );
+      const hadRecentCatalogRemoval = snapshots.some((snapshot) => snapshot.is_listed === false);
+      let situation: ProductStockMonitoring['situation'] | null = null;
+      if (latest.is_listed === false) {
+        situation = 'Saiu do catálogo';
+      } else if (unavailable) {
+        situation = sales.units > 0 ? 'Esgotado com vendas' : 'Esgotado sem vendas';
+      } else if (hadRecentUnavailableSnapshot) {
+        situation = hadRecentCatalogRemoval ? 'Voltou ao catálogo' : 'Reposto';
+      } else if (currentStock !== null && previousStock !== null && currentStock < previousStock) {
+        situation = 'Saldo em queda';
+      } else if (currentStock !== null && currentStock > 0 && sales.units === 0) {
+        situation = 'Sem vendas há 7 dias';
+      }
+      if (!situation) continue;
+      stockMonitoring.push({
+        ...product,
+        currentStock,
+        previousStock,
+        unitsSoldLast7Days: sales.units,
+        lastSaleAt: sales.lastSaleAt,
+        observedAt: latest.observed_at,
+        situation,
+        stock: latest.stock || product.stock,
+        real_balance: latest.real_balance || product.real_balance,
+        availability: latest.availability || product.availability,
+        is_active: latest.is_active || product.is_active,
+      });
+    }
+    stockMonitoring.sort(
+      (a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt) || byNameNoCase(a.name, b.name)
+    );
     return {
       totalAvailable: availableProducts.length,
       products,
+      stockMonitoring,
       soldProducts,
       unsoldProducts: products.length - soldProducts,
       unitsSoldSinceEntry: products.reduce(
@@ -257,6 +345,15 @@ class DataService {
         0
       ),
       missingFirstSeenCount: productsWithoutFirstSeen.length,
+      recentlyUnavailableCount: stockMonitoring.filter(
+        (product) =>
+          product.situation === 'Esgotado com vendas' ||
+          product.situation === 'Esgotado sem vendas' ||
+          product.situation === 'Saiu do catálogo'
+      ).length,
+      decliningStockCount: stockMonitoring.filter((product) => product.situation === 'Saldo em queda').length,
+      noRecentSalesCount: stockMonitoring.filter((product) => product.situation === 'Sem vendas há 7 dias').length,
+      stockTrackingReady: this.stockSnapshots.length > 0,
     };
   }
 
