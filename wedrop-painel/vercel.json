@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/snapshot.ts": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   }
 }
