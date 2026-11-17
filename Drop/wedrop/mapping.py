@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, Page, async_playwright
@@ -41,6 +41,7 @@ from .storage import products_file
 from .storage.product_status import INACTIVE, effective_status
 from .storage.run_state import COMPLETED, IN_PROGRESS, load_run_state, save_run_state
 from .storage.sqlite_repository import SalesRepository
+from .storage.stock_events import make_stock_snapshot
 from .storage.supabase_repository import SupabaseRepository
 
 MAX_RELOGINS_PER_CRAWL = 3
@@ -153,25 +154,45 @@ class _BatchSink:
         self._captured_at = captured_at
         self._products_json = products_json
         self._batch: list[dict] = []
+        self._snapshot_batch: list[dict] = []
 
-    def add(self, product: dict) -> None:
+    def add(self, product: dict, is_listed: bool | None = True) -> None:
         self._batch.append(product)
+        self._snapshot_batch.append(make_stock_snapshot(product, self._captured_at, is_listed))
         if len(self._batch) >= BATCH_SIZE:
             self.flush()
 
+    def add_snapshot(
+        self,
+        product: dict,
+        is_listed: bool | None = True,
+        listing_status: str | None = None,
+    ) -> None:
+        self._snapshot_batch.append(
+            make_stock_snapshot(product, self._captured_at, is_listed, listing_status)
+        )
+        if len(self._snapshot_batch) >= BATCH_SIZE:
+            self.flush()
+
     def flush(self) -> None:
-        if not self._batch:
+        if not self._batch and not self._snapshot_batch:
             return
         batch, self._batch = self._batch, []
-        self._repository.save_products(batch, self._captured_at)
-        if self._supabase is not None:
-            self._repository.enqueue_supabase_products(batch, self._captured_at)
-        file_records = [products_file.file_record(product, self._captured_at) for product in batch]
-        if self._products_json is None:
-            products_file.append_records(self._paths.products_file, file_records)
-        else:
-            self._products_json.upsert(file_records)
-        log_progress(f"Lote de {len(batch)} produtos gravado localmente.")
+        snapshots, self._snapshot_batch = self._snapshot_batch, []
+        if batch:
+            self._repository.save_products(batch, self._captured_at)
+            if self._supabase is not None:
+                self._repository.enqueue_supabase_products(batch, self._captured_at)
+            file_records = [products_file.file_record(product, self._captured_at) for product in batch]
+            if self._products_json is None:
+                products_file.append_records(self._paths.products_file, file_records)
+            else:
+                self._products_json.upsert(file_records)
+            log_progress(f"Lote de {len(batch)} produtos gravado localmente.")
+        if snapshots:
+            self._repository.save_stock_snapshots(snapshots)
+            if self._supabase is not None:
+                self._repository.enqueue_supabase_stock_snapshots(snapshots)
 
 
 def _sync_supabase_outbox(repository: SalesRepository, supabase: SupabaseRepository) -> None:
@@ -193,10 +214,14 @@ def _sync_supabase_outbox(repository: SalesRepository, supabase: SupabaseReposit
                     payload["mapped_products"],
                     payload["captured_at"],
                 )
+            elif upload["kind"] == "stock_snapshots":
+                supabase.save_stock_snapshots(payload["snapshots"])
             else:
                 raise RuntimeError(f"Tipo de envio ao Supabase desconhecido: {upload['kind']}")
             repository.remove_supabase_upload(upload["id"])
             log_progress(f"Envio ao Supabase: lote {index}/{len(pending)} concluído.")
+        cutoff = (datetime.now().astimezone() - timedelta(days=7)).isoformat(timespec="seconds")
+        supabase.delete_stock_snapshots_before(cutoff)
     except Exception as exc:
         remaining = len(repository.pending_supabase_uploads())
         raise SupabaseUploadError(
@@ -253,8 +278,16 @@ class _ProductCrawler:
                 await self._relogin()
         self._sink.flush()
         if self._unchanged:
-            log_progress(f"  {self._unchanged} de {self._total} produtos sem mudança de preço e saldo; mantidos como estavam.")
+            log_progress(f"  {self._unchanged} de {self._total} produtos sem mudança; mantidos como estavam.")
         return failures
+
+    def observe(
+        self,
+        product: dict,
+        is_listed: bool | None,
+        listing_status: str | None = None,
+    ) -> None:
+        self._sink.add_snapshot(product, is_listed, listing_status)
 
     async def _work(
         self,
@@ -276,8 +309,10 @@ class _ProductCrawler:
                 log_progress(f"  ERRO ao ler produto {job.product_id}: {exc}")
                 continue
             self._done += 1
-            if product is None:  # preço e saldo iguais ao dia anterior: nada a gravar
+            if product is None:
                 self._unchanged += 1
+                if job.known_record is not None:
+                    self._sink.add_snapshot(job.known_record, job.is_listed)
                 continue
             product = {
                 **product,
@@ -286,7 +321,7 @@ class _ProductCrawler:
                 "leitura_categoria": f"{self._done}/{self._total}",
             }
             self._report(product)
-            self._sink.add(product)
+            self._sink.add(product, job.is_listed)
 
     def _report(self, product: dict) -> None:
         missing = []
@@ -608,6 +643,7 @@ async def _refresh_category(
     log_progress(f"{label}: categoria inteira ({reason}).")
     summary.full_categories.append(category.name)
     listing = await _read_listing(listing_page, category, summary)
+    listing_complete = category.name not in summary.shortfall_categories
     known_by_id = {str(record["product_id"]): record for record in known}
     # Esgotado com selo Indisponível na listagem não é aberto: a página não traria nada novo.
     # Esgotado com selo Disponível (voltou ao estoque) ou sem selo é lido como os demais.
@@ -617,6 +653,12 @@ async def _refresh_category(
         if product_id in known_by_id and _is_sold_out(known_by_id[product_id]) and item.status == INACTIVE
     ]
     skipped_set = set(skipped)
+    for product_id in skipped:
+        crawler.observe(
+            known_by_id[product_id],
+            is_listed=True,
+            listing_status=listing[product_id].status,
+        )
     listed_jobs = [
         _balance_job(known_by_id[product_id], category)
         if product_id in known_by_id
@@ -633,6 +675,8 @@ async def _refresh_category(
         for product_id, record in known_by_id.items()
         if product_id not in listing and not _is_sold_out(record)
     ]
+    for record in gone:
+        crawler.observe(record, is_listed=False if listing_complete else None)
     log_progress(
         f"Categoria {category.name}: {len(listing)} listados ({new_count} novos, "
         f"{len(skipped)} esgotados pulados pelo selo); "
@@ -641,7 +685,15 @@ async def _refresh_category(
     failures = await crawler.crawl(listed_jobs)
     summary.failed_ids.extend(job.product_id for job, _ in failures)
     gone_failures = await crawler.crawl(
-        [ProductJob(str(record["product_id"]), str(record.get("url", "")), category.name) for record in gone]
+        [
+            ProductJob(
+                str(record["product_id"]),
+                str(record.get("url", "")),
+                category.name,
+                is_listed=False if listing_complete else None,
+            )
+            for record in gone
+        ]
     )
     if gone_failures:
         # A página pode ter sido removida do site; o registro anterior fica como estava.

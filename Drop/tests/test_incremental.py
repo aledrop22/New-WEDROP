@@ -20,6 +20,7 @@ from wedrop.scraping.catalog import Category, ListedProduct
 from wedrop.scraping.product_page import ProductJob
 from wedrop.scraping.product_record import (
     PRICE_CHANGED,
+    STATUS_CHANGED,
     STOCK_CHANGED,
     UNCHANGED,
     PageSnapshot,
@@ -98,6 +99,16 @@ class CompareWithPreviousDayTests(unittest.TestCase):
     def test_stock_change_wins_over_price_change(self):
         self.assertEqual(compare_balance(self.known, {"price": "R$ 12,00", "stock": "2 un."}), STOCK_CHANGED)
 
+    def test_availability_change_is_not_discarded_when_stock_and_price_are_unchanged(self):
+        known = {"price": "R$ 10,00", "stock": "3 un.", "availability": "Disponível", "is_active": "Ativo"}
+        update = {
+            "price": "R$ 10,00",
+            "stock": "3 un.",
+            "availability": "Indisponível",
+            "is_active": "Inativo",
+        }
+        self.assertEqual(compare_balance(known, update), STATUS_CHANGED)
+
     def test_reread_keeps_previous_value_of_fields_left_empty(self):
         record = {"price": "R$ 12,00", "cnpj": "", "stock": "2 un."}
         merged = fill_from_known(record, {"price": "R$ 10,00", "cnpj": "12.345.678/0001-90", "stock": "3 un."})
@@ -145,7 +156,11 @@ class FakeCrawler:
 
     def __init__(self, failures_per_call=()):
         self.calls: list[list[ProductJob]] = []
+        self.observations: list[tuple[str, bool | None, str | None]] = []
         self._failures = list(failures_per_call)
+
+    def observe(self, record, is_listed, listing_status=None):
+        self.observations.append((record["product_id"], is_listed, listing_status))
 
     async def crawl(self, jobs):
         self.calls.append(jobs)
@@ -319,8 +334,11 @@ class CrawlerRecordTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self):
                 self.saved = []
 
-            def add(self, product):
+            def add(self, product, is_listed=True):
                 self.saved.append(product)
+
+            def add_snapshot(self, product, is_listed=True, listing_status=None):
+                pass
 
             def flush(self):
                 pass
@@ -350,8 +368,11 @@ class CrawlerFailureTests(unittest.IsolatedAsyncioTestCase):
                     sibling_stopped.set()
 
         class Sink:
-            def add(self, _product):
+            def add(self, _product, is_listed=True):
                 raise RuntimeError("falha ao salvar")
+
+            def add_snapshot(self, _product, is_listed=True, listing_status=None):
+                pass
 
             def flush(self):
                 pass

@@ -69,7 +69,9 @@ class SupabaseRowTest(unittest.TestCase):
         missing_column.ok = False
         missing_column.status_code = 400
         missing_column.text = "column does not exist"
-        with patch.object(repository.session, "get", side_effect=[ok, ok, ok, missing_column]):
+        with patch.object(
+            repository.session, "get", side_effect=[ok, ok, ok, ok, missing_column]
+        ):
             with self.assertRaisesRegex(RuntimeError, PRICE_ALERT_FIELD):
                 repository.validate()
         repository.close()

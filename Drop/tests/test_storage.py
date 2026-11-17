@@ -13,6 +13,7 @@ import requests
 from wedrop.storage.sqlite_repository import SalesRepository
 from wedrop.storage.stock_events import (
     classify_movement,
+    make_stock_snapshot,
     parse_event_datetime,
     parse_quantity,
 )
@@ -63,6 +64,42 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(classify_movement("Venda"), "sale")
         self.assertEqual(classify_movement("Entrada de estoque"), "stock_in")
         self.assertEqual(classify_movement("Ajuste manual"), "other")
+
+    def test_stock_snapshot_is_deduplicated_and_keeps_listing_state(self):
+        product = {
+            "product_id": "p1",
+            "availability": "Indisponível",
+            "is_active": "Inativo",
+            "stock": "0",
+            "real_balance": "0",
+        }
+        first = make_stock_snapshot(product, "2026-11-09T10:00:00-03:00", False)
+        second = make_stock_snapshot(product, "2026-11-09T10:00:00-03:00", False)
+        self.assertEqual(first, second)
+        self.assertFalse(first["is_listed"])
+        self.assertEqual(first["stock"], "0")
+
+    def test_stock_snapshot_storage_prunes_rows_older_than_seven_days(self):
+        repository = SalesRepository(":memory:")
+        self.addCleanup(repository.close)
+        repository.save_products(
+            [{"product_id": "p1", "name": "Produto", "category": "Casa", "url": "https://x/p1"}],
+            "2026-11-09T10:00:00-03:00",
+        )
+        old_snapshot = make_stock_snapshot(
+            {"product_id": "p1", "stock": "4"},
+            "2026-11-01T10:00:00-03:00",
+        )
+        recent_snapshot = make_stock_snapshot(
+            {"product_id": "p1", "stock": "0"},
+            "2026-11-09T10:00:00-03:00",
+        )
+        repository.save_stock_snapshots([old_snapshot])
+        repository.save_stock_snapshots([recent_snapshot])
+        rows = repository.connection.execute(
+            "SELECT observation_id, stock FROM stock_snapshots"
+        ).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [(recent_snapshot["observation_id"], "0")])
 
     def test_repeated_daily_scan_does_not_duplicate_sales(self):
         temp_dir = self.enterContext(tempfile.TemporaryDirectory())
@@ -403,8 +440,8 @@ class StorageTests(unittest.TestCase):
             repository.session, "get", return_value=successful_response
         ) as get:
             repository.validate()
-        # três tabelas e as colunas price_changed_at e first_seen_at de wedrop_products
-        self.assertEqual(get.call_count, 5)
+        # quatro tabelas e as colunas price_changed_at e first_seen_at de wedrop_products
+        self.assertEqual(get.call_count, 6)
 
         failed_response = Mock(spec=requests.Response)
         failed_response.ok = False

@@ -52,6 +52,17 @@ export interface StockEventRecord {
   recorded_at: string;
 }
 
+export interface ProductStockSnapshot {
+  observation_id: string;
+  product_id: string;
+  availability: string | null;
+  is_active: string | null;
+  stock: string | null;
+  real_balance: string | null;
+  is_listed: boolean | null;
+  observed_at: string;
+}
+
 export interface CategorySummary {
   name: string;
   category_url?: string;
@@ -116,10 +127,31 @@ export interface NewProductWithSales extends ProductRecord {
 export interface NewProductsData {
   totalAvailable: number;
   products: NewProductWithSales[];
+  stockMonitoring: ProductStockMonitoring[];
   soldProducts: number;
   unsoldProducts: number;
   unitsSoldSinceEntry: number;
   missingFirstSeenCount: number;
+  recentlyUnavailableCount: number;
+  decliningStockCount: number;
+  noRecentSalesCount: number;
+  stockTrackingReady: boolean;
+}
+
+export interface ProductStockMonitoring extends ProductRecord {
+  currentStock: number | null;
+  previousStock: number | null;
+  unitsSoldLast7Days: number;
+  lastSaleAt: string | null;
+  observedAt: string;
+  situation:
+    | 'Esgotado com vendas'
+    | 'Esgotado sem vendas'
+    | 'Saiu do catálogo'
+    | 'Reposto'
+    | 'Voltou ao catálogo'
+    | 'Saldo em queda'
+    | 'Sem vendas há 7 dias';
 }
 
 export interface Category24hComparison {

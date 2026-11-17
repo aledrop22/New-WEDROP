@@ -24,7 +24,7 @@ Supabase â†’ api/snapshot.ts (Vercel, chave de serviÃ§o no servidor) â�
 - **Detalhe da categoria**: filtro por status (Todos, DisponÃ­veis, IndisponÃ­veis, Sem status), busca por nome, SKU, EAN ou fornecedor, tabela paginada e grÃ¡fico de vendas e reposiÃ§Ãµes por produto.
 - **GrÃ¡ficos gerais**: movimentaÃ§Ãµes por dia, movimentaÃ§Ãµes por categoria, 20 produtos mais vendidos no perÃ­odo e tabela dos 100 produtos com mais movimentaÃ§Ã£o, com volume por dia.
 - **DecisÃ£o 24h** (tela inicial): vendas de ontem Ã— hoje por categoria (quantos produtos venderam em cada dia), destaques de quem vende nos dois dias e de quem saiu sÃ³ hoje ou sÃ³ ontem, top 20 e reposiÃ§Ãµes. Quando um produto do ranking tem alteraÃ§Ã£o de preÃ§o registrada hoje ou ontem, a coluna **PreÃ§o** destaca o novo valor.
-- **VisÃ£o extra**: Comparativo D-1 vs D0.
+- **VisÃ£o extra**: Comparativo D-1 vs D0, com itens ativos no catÃ¡logo por categoria e contagem de produtos distintos vendidos, repetidos entre os dias e links para os produtos.
 - **BotÃµes**: atualizar agora, exportar CSV, trocar tema e abrir o modal de conexÃ£o e status da leitura (sÃ³ leitura).
 
 ## VariÃ¡veis de ambiente (Vercel)
@@ -39,6 +39,8 @@ Em **Project Settings â†’ Environment Variables**:
 Consulte `.env.example`. NÃ£o use prefixo `VITE_` nessas chaves.
 
 ## Publicar na Vercel
+
+Antes do primeiro deploy com o acompanhamento de estoque, execute `../Drop/add_stock_snapshots.sql` no SQL Editor do Supabase. O painel e o coletor passam a depender da tabela `wedrop_stock_snapshots`; o historico so comeca na primeira coleta depois da migracao.
 
 1. Em **Add New â†’ Project**, importe o repositÃ³rio.
 2. Em **Root Directory**, selecione `wedrop-painel` (a pasta que tem este README).
@@ -60,4 +62,4 @@ Consulte `supabase_schema.sql`:
 - `wedrop_categories`
 - `wedrop_products`
 - `wedrop_stock_events`
-
+- `wedrop_stock_snapshots`

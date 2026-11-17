@@ -309,7 +309,7 @@ export function App() {
               {viewMode === 'day_comparison' && (
                 <DayComparisonView
                   categoriesComparison={decision24hData.topCategories24h}
-                  topProducts={decision24hData.top20Products}
+                  soldProducts={decision24hData.soldProducts}
                   onSelectCategory={handleSelectCategoryFromView}
                 />
               )}

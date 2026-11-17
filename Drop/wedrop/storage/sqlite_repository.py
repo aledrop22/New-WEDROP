@@ -63,6 +63,21 @@ CREATE INDEX IF NOT EXISTS stock_events_kind_date_idx
     ON stock_events (event_kind, event_at);
 CREATE INDEX IF NOT EXISTS stock_events_product_date_idx
     ON stock_events (product_id, event_at);
+CREATE TABLE IF NOT EXISTS stock_snapshots (
+    observation_id TEXT PRIMARY KEY,
+    product_id TEXT NOT NULL,
+    availability TEXT,
+    is_active TEXT,
+    stock TEXT,
+    real_balance TEXT,
+    is_listed INTEGER,
+    observed_at TEXT NOT NULL,
+    FOREIGN KEY (product_id) REFERENCES products(product_id)
+);
+CREATE INDEX IF NOT EXISTS stock_snapshots_product_date_idx
+    ON stock_snapshots (product_id, observed_at);
+CREATE INDEX IF NOT EXISTS stock_snapshots_date_idx
+    ON stock_snapshots (observed_at);
 CREATE TABLE IF NOT EXISTS supabase_outbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     kind TEXT NOT NULL,
@@ -201,6 +216,9 @@ class SalesRepository:
             {"products": products, "captured_at": captured_at},
         )
 
+    def enqueue_supabase_stock_snapshots(self, snapshots: list[dict[str, Any]]) -> None:
+        self._enqueue_supabase("stock_snapshots", {"snapshots": snapshots})
+
     def enqueue_supabase_category(
         self, category: dict[str, Any], mapped_products: int, captured_at: str
     ) -> None:
@@ -278,6 +296,37 @@ class SalesRepository:
                     :event_at, :event_at_raw, :nf_key, :recorded_at)
             """,
             events,
+        )
+        self.connection.commit()
+
+    def save_stock_snapshots(self, snapshots: list[dict[str, Any]]) -> None:
+        if not snapshots:
+            return
+        cutoff = (
+            datetime.fromisoformat(snapshots[-1]["observed_at"]) - timedelta(days=7)
+        ).isoformat(timespec="seconds")
+        self.connection.executemany(
+            """
+            INSERT INTO stock_snapshots
+                (observation_id, product_id, availability, is_active, stock, real_balance,
+                 is_listed, observed_at)
+            VALUES (:observation_id, :product_id, :availability, :is_active, :stock,
+                    :real_balance, :is_listed, :observed_at)
+            ON CONFLICT(observation_id) DO UPDATE SET
+                availability = excluded.availability,
+                is_active = excluded.is_active,
+                stock = excluded.stock,
+                real_balance = excluded.real_balance,
+                is_listed = excluded.is_listed
+            """,
+            [
+                {**snapshot, "is_listed": None if snapshot.get("is_listed") is None else int(snapshot["is_listed"])}
+                for snapshot in snapshots
+            ],
+        )
+        self.connection.execute(
+            "DELETE FROM stock_snapshots WHERE observed_at < ?",
+            (cutoff,),
         )
         self.connection.commit()
 

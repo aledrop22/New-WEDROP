@@ -19,6 +19,7 @@ from ..logs import log_progress
 from ..config import PRODUCT_READ_ATTEMPTS
 from .product_record import (
     PRICE_CHANGED,
+    STATUS_CHANGED,
     UNCHANGED,
     PageSnapshot,
     build_balance_update,
@@ -150,6 +151,7 @@ class ProductJob:
     url: str
     category_name: str
     known_record: dict[str, Any] | None = None
+    is_listed: bool | None = True
 
 
 def _now() -> str:
@@ -210,7 +212,14 @@ class ProductReader:
                 return None
             if change == PRICE_CHANGED:
                 log_progress(f"  Preço mudou (ID {job.product_id}): {known.get('price')} → {update['price']}.")
-                return with_price_alert({**known, "price": update["price"]}, known, _now())
+                return with_price_alert({**known, **update}, known, _now())
+            if change == STATUS_CHANGED:
+                log_progress(
+                    f"  Disponibilidade mudou (ID {job.product_id}): "
+                    f"{known.get('availability') or known.get('is_active')} → "
+                    f"{update['availability'] or update['is_active']}."
+                )
+                return {**known, **update}
             log_progress(
                 f"  Saldo mudou (ID {job.product_id}): {known.get('stock')} → {update['stock']}; lendo o histórico."
             )

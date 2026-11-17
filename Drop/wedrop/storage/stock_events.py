@@ -92,3 +92,26 @@ def make_event_records(product: dict[str, Any], captured_at: str) -> list[dict[s
             }
         )
     return records
+
+
+def make_stock_snapshot(
+    product: dict[str, Any],
+    observed_at: str,
+    is_listed: bool | None = True,
+    listing_status: str | None = None,
+) -> dict[str, Any]:
+    """Cria uma observação deduplicável do saldo e da disponibilidade de um produto."""
+    product_id = str(product["product_id"])
+    observation_id = hashlib.sha256(
+        f"{product_id}\x1f{observed_at}".encode("utf-8")
+    ).hexdigest()
+    return {
+        "observation_id": observation_id,
+        "product_id": product_id,
+        "availability": product.get("availability"),
+        "is_active": listing_status or product.get("is_active"),
+        "stock": product.get("stock"),
+        "real_balance": product.get("real_balance"),
+        "is_listed": is_listed,
+        "observed_at": observed_at,
+    }

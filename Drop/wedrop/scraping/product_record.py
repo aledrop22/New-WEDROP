@@ -134,20 +134,30 @@ def build_balance_update(known: dict[str, Any], snapshot: PageSnapshot) -> dict[
         "stock": stock,
         "real_balance": real_balance,
         "total_stock_count": total_stock,
+        "availability": availability or known.get("availability", ""),
+        "is_active": status_from_availability(availability) or known.get("is_active", ""),
     }
 
 
 UNCHANGED = "sem_mudanca"
 PRICE_CHANGED = "preco"
 STOCK_CHANGED = "saldo"
+STATUS_CHANGED = "disponibilidade"
 
 
 def compare_balance(known: dict[str, Any], update: dict[str, str]) -> str:
-    """Compara preço e saldo de hoje com o registro do dia anterior. Saldo tem prioridade."""
+    """Compara saldo, preço e disponibilidade atuais com o registro anterior."""
     if update["stock"] != str(known.get("stock") or ""):
         return STOCK_CHANGED
     if update["price"] != str(known.get("price") or ""):
         return PRICE_CHANGED
+    if (
+        update.get("availability", known.get("availability") or "")
+        != str(known.get("availability") or "")
+        or update.get("is_active", known.get("is_active") or "")
+        != str(known.get("is_active") or "")
+    ):
+        return STATUS_CHANGED
     return UNCHANGED
 
 
