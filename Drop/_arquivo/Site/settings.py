@@ -19,12 +19,12 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 ROBOTSTXT_OBEY = False
 
 # Concorrência (OTIMIZADO PARA VELOCIDADE)
-CONCURRENT_REQUESTS_PER_DOMAIN = 16  # Aumentado para mais velocidade
-CONCURRENT_REQUESTS = 16  # Aumentado para mais velocidade
-DOWNLOAD_DELAY = 0.1  # Reduzido para mais velocidade
+CONCURRENT_REQUESTS_PER_DOMAIN = 32  # Aumentado para mais velocidade
+CONCURRENT_REQUESTS = 32  # Aumentado para mais velocidade
+DOWNLOAD_DELAY = 0  # Removido delay para máxima velocidade
 
 # Timeouts
-DOWNLOAD_TIMEOUT = 120  # Aumentado de 60 para 120 segundos
+DOWNLOAD_TIMEOUT = 60  # Reduzido de 120 para 60 segundos para mais velocidade
 
 # LIMITE PARA TESTES (descomente para testar com poucas páginas)
 # CLOSESPIDER_PAGECOUNT = 3  # Parar após 3 páginas de listagem (remova esta linha para full scrape)
@@ -66,13 +66,13 @@ PLAYWRIGHT_LAUNCH_OPTIONS = {
 if sys.platform == "win32":
     PLAYWRIGHT_LAUNCH_OPTIONS["handle_sigint"] = False
 
-# Timeouts/playwright (aumentados para maior estabilidade)
-PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 45_000  # 45s
-PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 60_000  # 60s
+# Timeouts/playwright (reduzidos para maior velocidade)
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000  # 30s (reduzido de 45s)
+PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 30_000  # 30s (reduzido de 60s)
 
-# Limitar contexts/páginas para reduzir memória
-PLAYWRIGHT_MAX_CONTEXTS = 2  # Reduzido de 4 para 2
-PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 3  # Reduzido de 4 para 2
+# Limitar contexts/páginas para aumentar velocidade
+PLAYWRIGHT_MAX_CONTEXTS = 8  # Aumentado de 2 para 8 para mais concorrência
+PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 8  # Aumentado de 3 para 8 para mais concorrência
 
 # Função para bloquear recursos desnecessários (Imagens, CSS, Fontes)
 def should_abort_request(request):

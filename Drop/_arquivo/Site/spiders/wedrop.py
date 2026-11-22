@@ -95,7 +95,7 @@ class WedropSpider(scrapy.Spider):
                     timeout=45000
                 ),
                 playwright_page_methods=[
-                    PageMethod("wait_for_selector", "ul.products", timeout=15000)
+                    PageMethod("wait_for_selector", "ul.products", timeout=8000)
                 ]
             )
         )
@@ -109,10 +109,10 @@ class WedropSpider(scrapy.Spider):
             page = response.meta["playwright_page"]
 
             try:
-                await page.wait_for_selector("ul.products li.product", timeout=15000)
+                await page.wait_for_selector("ul.products li.product", timeout=8000)
                 self.log(f"✅ Produtos visíveis")
                 try:
-                    await page.wait_for_selector("div.tag-vendas-produto", timeout=2000)
+                    await page.wait_for_selector("div.tag-vendas-produto", timeout=1000)
                 except:
                     pass
         
@@ -196,7 +196,7 @@ class WedropSpider(scrapy.Spider):
                             playwright_context_kwargs={'storage_state': storage_state},
                             playwright_page_goto_kwargs=dict(
                                 wait_until="domcontentloaded",
-                                timeout=25000
+                                timeout=15000
                             ),
                             playwright_include_page=True,
                             product_index=product_count,
@@ -249,10 +249,10 @@ class WedropSpider(scrapy.Spider):
                         playwright_context_kwargs={'storage_state': self.storage_state},
                         playwright_page_goto_kwargs=dict(
                             wait_until="domcontentloaded",
-                            timeout=45000
+                            timeout=30000
                         ),
                         playwright_page_methods=[
-                            PageMethod("wait_for_selector", "ul.products", timeout=15000)
+                            PageMethod("wait_for_selector", "ul.products", timeout=8000)
                         ]
                     )
                 )
@@ -281,15 +281,13 @@ class WedropSpider(scrapy.Spider):
         page = response.meta["playwright_page"]
 
         try:
-            try:
-                await page.evaluate("() => { const button = document.querySelector('button#webbex-arp-entendido'); if (button) { button.click(); } }")
-                await page.wait_for_timeout(300)
-            except Exception:
-                pass
+            await page.evaluate("() => { const button = document.querySelector('button#webbex-arp-entendido'); if (button) { button.click(); } }")
+        except Exception:
+            pass
 
-            await page.wait_for_selector(
+        await page.wait_for_selector(
                 "p.price, button[name='add-to-cart']",
-                timeout=10000
+                timeout=5000
             )
         except Exception as e:
             self.log(f"ERRO CRITICO: Nao foi possivel encontrar 'p.price' ou 'add-to-cart' em {response.url}. O Cookie pode ter EXPIRADO. Erro: {e}", level=logging.ERROR)

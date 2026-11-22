@@ -64,10 +64,10 @@ class WedropCatalogSpider(scrapy.Spider):
                 playwright_context_kwargs={'storage_state': self.storage_state},
                 playwright_page_goto_kwargs=dict(
                     wait_until="domcontentloaded",
-                    timeout=45000
+                    timeout=30000
                 ),
                 playwright_page_methods=[
-                    PageMethod("wait_for_selector", "div[class*='category'], div[class*='Category']", timeout=15000)
+                    PageMethod("wait_for_selector", "div[class*='category'], div[class*='Category']", timeout=8000)
                 ]
             )
         )
