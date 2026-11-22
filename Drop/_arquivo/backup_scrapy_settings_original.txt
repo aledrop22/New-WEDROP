@@ -1,0 +1,69 @@
+# BACKUP DAS CONFIGURAÇÕES ORIGINAIS DO SCRAPY
+# Data: 22/11/2026
+# Motivo: Otimizações de performance para reduzir tempo de scraping
+
+# ============================================================
+# ARQUIVO: Drop/_arquivo/Site/settings.py
+# ============================================================
+
+# CONFIGURAÇÕES ORIGINAIS:
+# CONCURRENT_REQUESTS_PER_DOMAIN = 16
+# CONCURRENT_REQUESTS = 16
+# DOWNLOAD_DELAY = 0.1
+# DOWNLOAD_TIMEOUT = 120
+# PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 45_000
+# PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 60_000
+# PLAYWRIGHT_MAX_CONTEXTS = 2
+# PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 3
+
+# CONFIGURAÇÕES OTIMIZADAS:
+# CONCURRENT_REQUESTS_PER_DOMAIN = 32
+# CONCURRENT_REQUESTS = 32
+# DOWNLOAD_DELAY = 0
+# DOWNLOAD_TIMEOUT = 60
+# PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000
+# PLAYWRIGHT_BROWSER_LAUNCH_TIMEOUT = 30_000
+# PLAYWRIGHT_MAX_CONTEXTS = 8
+# PLAYWRIGHT_MAX_PAGES_PER_CONTEXT = 8
+
+# ============================================================
+# ARQUIVO: Drop/_arquivo/Site/spiders/wedrop.py
+# ============================================================
+
+# CONFIGURAÇÕES ORIGINAIS:
+# playwright_page_methods=[PageMethod("wait_for_selector", "ul.products", timeout=15000)]
+# await page.wait_for_selector("ul.products li.product", timeout=15000)
+# await page.wait_for_selector("div.tag-vendas-produto", timeout=2000)
+# playwright_page_goto_kwargs=dict(wait_until="domcontentloaded", timeout=25000)
+# playwright_page_goto_kwargs=dict(wait_until="domcontentloaded", timeout=45000)
+# playwright_page_methods=[PageMethod("wait_for_selector", "ul.products", timeout=15000)]
+# await page.wait_for_selector("p.price, button[name='add-to-cart']", timeout=10000)
+# await page.wait_for_timeout(300)
+
+# CONFIGURAÇÕES OTIMIZADAS:
+# playwright_page_methods=[PageMethod("wait_for_selector", "ul.products", timeout=8000)]
+# await page.wait_for_selector("ul.products li.product", timeout=8000)
+# await page.wait_for_selector("div.tag-vendas-produto", timeout=1000)
+# playwright_page_goto_kwargs=dict(wait_until="domcontentloaded", timeout=15000)
+# playwright_page_goto_kwargs=dict(wait_until="domcontentloaded", timeout=30000)
+# playwright_page_methods=[PageMethod("wait_for_selector", "ul.products", timeout=8000)]
+# await page.wait_for_selector("p.price, button[name='add-to-cart']", timeout=5000)
+# (REMOVIDO) await page.wait_for_timeout(300)
+
+# ============================================================
+# ARQUIVO: Drop/_arquivo/Site/spiders/wedrop_catalog.py
+# ============================================================
+
+# CONFIGURAÇÕES ORIGINAIS:
+# playwright_page_goto_kwargs=dict(wait_until="domcontentloaded", timeout=45000)
+# playwright_page_methods=[PageMethod("wait_for_selector", "div[class*='category'], div[class*='Category']", timeout=15000)]
+
+# CONFIGURAÇÕES OTIMIZADAS:
+# playwright_page_goto_kwargs=dict(wait_until="domcontentloaded", timeout=30000)
+# playwright_page_methods=[PageMethod("wait_for_selector", "div[class*='category'], div[class*='Category']", timeout=8000)]
+
+# ============================================================
+# COMANDO PARA RESTAURAR CONFIGURAÇÕES ORIGINAIS (SE NECESSÁRIO)
+# ============================================================
+
+# Se precisar reverter manualmente, use estes valores nos arquivos correspondentes.
