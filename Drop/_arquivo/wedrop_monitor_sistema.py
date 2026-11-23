@@ -341,7 +341,7 @@ class WedropMonitor:
         prompt_for_credentials: bool = True,
     ) -> None:
         await page.goto(f"{BASE_URL}/catalog", wait_until="domcontentloaded")
-        await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(500)
         # Verifica se já está autenticado (não está na página de login e não
         # há campo de senha). Usa try/except pois a página pode navegar/redirecionar.
         try:
@@ -377,7 +377,7 @@ class WedropMonitor:
             ) from exc
 
         await page.goto(f"{BASE_URL}/catalog", wait_until="domcontentloaded")
-        await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(500)
         if await page.locator('input[type="password"]').count():
             raise RuntimeError("Login não autorizado pelo WeDrop; sessão não foi salva.")
         await context.storage_state(path=str(STORAGE_STATE_FILE))
@@ -534,7 +534,7 @@ class WedropMonitor:
                 expected_pages is None or state == (1, expected_pages)
             ):
                 return
-            await page.wait_for_timeout(250)
+            await page.wait_for_timeout(100)
         raise RuntimeError(
             "O seletor foi configurado para 100 produtos por página, mas o "
             "indicador de paginação não corresponde à quantidade esperada."
@@ -568,7 +568,7 @@ class WedropMonitor:
 
     async def get_products_from_category(self, page, category: dict) -> dict[str, str]:
         await page.goto(category["url"], wait_until="domcontentloaded")
-        await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(500)
         await self._set_products_per_page(page, category.get("count"))
         products: dict[str, str] = {}
         seen_pages: set[tuple[str, tuple[str, ...]]] = set()
@@ -587,7 +587,7 @@ class WedropMonitor:
                     unchanged_rounds = 0
                     previous_count = len(page_links)
                 await page.mouse.wheel(0, 1200)
-                await page.wait_for_timeout(250)
+                await page.wait_for_timeout(100)
 
             pagination_state = await self._pagination_state(page)
             if pagination_state is not None:
@@ -642,7 +642,7 @@ class WedropMonitor:
                             page_links = await self._product_links_on_page(page)
                             if state == fallback_state and page_links:
                                 break
-                            await page.wait_for_timeout(250)
+                            await page.wait_for_timeout(100)
                         else:
                             raise RuntimeError(
                                 f"Não foi possível confirmar a página "
@@ -688,7 +688,7 @@ class WedropMonitor:
                 await next_button.click()
             changed = False
             for _ in range(40):
-                await page.wait_for_timeout(250)
+                await page.wait_for_timeout(100)
                 new_state = await self._pagination_state(page)
                 if new_state is None:
                     continue
@@ -732,7 +732,7 @@ class WedropMonitor:
                     )
                 except Exception:
                     # Fallback: esperar um pouco mais para a página renderizar
-                    await page.wait_for_timeout(1500)
+                    await page.wait_for_timeout(1000)
                 if await page.locator('input[type="password"]').count():
                     raise RuntimeError(
                         "A sessão WeDrop expirou durante a coleta. Execute novamente para "
@@ -808,7 +808,7 @@ class WedropMonitor:
             except Exception as e:
                 if "Execution context was destroyed" in str(e) and attempt < max_retries - 1:
                     log_progress(f"  Contexto destruído ao carregar produto {product_id}, tentando novamente ({attempt + 1}/{max_retries})...")
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(500)
                     continue
                 raise
         sku_match = re.search(r"SKU:\s*([^|]+)", sku_ean_text, re.IGNORECASE)
@@ -873,14 +873,14 @@ class WedropMonitor:
         stock_tab = page.get_by_role("tab", name=re.compile("(Valores|Estoque|Saldo)", re.I))
         if await stock_tab.count():
             await stock_tab.first.click()
-            await page.wait_for_timeout(400)
+            await page.wait_for_timeout(200)
             # Atualizar page_text após clicar na aba de estoque
             page_text = await page.locator("body").inner_text()
 
         history_tab = page.get_by_role("tab", name=re.compile("Histórico de Estoque", re.I))
         if await history_tab.count():
             await history_tab.first.click()
-            await page.wait_for_timeout(400)
+            await page.wait_for_timeout(200)
 
         history = []
         # Seletores específicos para histórico de estoque
@@ -1025,6 +1025,10 @@ class WedropMonitor:
         local_only: bool = False,
     ) -> None:
         configure_progress_logging()
+        start_time = datetime.now()
+        log_progress("="*60)
+        log_progress(f"INÍCIO DA COLETA: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        log_progress("="*60)
         log_progress("Iniciando coleta completa do catálogo WeDrop.")
         log_progress(f"Destino JSON: {JSON_DATA_FILE}")
         log_progress(f"Destino histórico local: {DB_FILE}")
@@ -1239,6 +1243,14 @@ class WedropMonitor:
                                     product = await self.get_product_details_and_history(
                                         page, product_id, product_url, category["name"]
                                     )
+                                # Pular produtos indisponíveis para otimizar tempo
+                                availability_text = product.get("availability", "").upper()
+                                if "INDISPONÍVEL" in availability_text or "FORA DE ESTOQUE" in availability_text:
+                                    log_progress(
+                                        f"⏭️ Produto indisponível pulado: {product.get('name') or 'nome indisponível'} (ID {product_id})"
+                                    )
+                                    continue
+
                                 products.append(product)
                                 # Validar campos obrigatórios
                                 missing_fields = []
@@ -1260,7 +1272,8 @@ class WedropMonitor:
                                     f"histórico: {len(product.get('stock_history', []))} "
                                     "movimentações."
                                 )
-                                if len(products) == 10:  # Salvar a cada 10 produtos
+                                if len(products) == 100:  # Salvar a cada 100 produtos
+                                    log_progress(f"✓ Checkpoint: {total_products + len(products)} produtos processados")
                                     _flush_batch(products)
                                     products = []
                         finally:
@@ -1302,6 +1315,30 @@ class WedropMonitor:
                             "Destino remoto: Supabase (categorias, produtos e eventos)."
                         )
                     log_progress(f"Log detalhado da execução: {LOG_FILE}")
+
+                    # Atualizar estado_coleta.json com status concluído
+                    end_time = datetime.now()
+                    duration = end_time - start_time
+                    estado_file = PROJECT_DIR / "dados" / "estado_coleta.json"
+                    estado_file.parent.mkdir(exist_ok=True)
+                    estado_data = {
+                        "status": "concluido",
+                        "site_total": site_total if category_filter is None and product_limit is None else total_products,
+                        "saved_total": saved_total if category_filter is None and product_limit is None else total_products,
+                        "started_at": start_time.isoformat(),
+                        "ended_at": end_time.isoformat(),
+                        "duration_seconds": int(duration.total_seconds()),
+                        "duration_formatted": str(duration).split('.')[0],
+                        "updated_at": end_time.astimezone().isoformat(timespec="seconds"),
+                        "failed_count": 0,
+                        "last_category": ""
+                    }
+                    estado_file.write_text(json.dumps(estado_data, indent=2), encoding="utf-8")
+
+                    log_progress("="*60)
+                    log_progress(f"FIM DA COLETA: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    log_progress(f"TEMPO TOTAL: {str(duration).split('.')[0]} ({int(duration.total_seconds())} segundos)")
+                    log_progress("="*60)
                 finally:
                     await context.close()
             finally:
