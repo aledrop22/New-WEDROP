@@ -1243,14 +1243,6 @@ class WedropMonitor:
                                     product = await self.get_product_details_and_history(
                                         page, product_id, product_url, category["name"]
                                     )
-                                # Pular produtos indisponíveis para otimizar tempo
-                                availability_text = product.get("availability", "").upper()
-                                if "INDISPONÍVEL" in availability_text or "FORA DE ESTOQUE" in availability_text:
-                                    log_progress(
-                                        f"⏭️ Produto indisponível pulado: {product.get('name') or 'nome indisponível'} (ID {product_id})"
-                                    )
-                                    continue
-
                                 products.append(product)
                                 # Validar campos obrigatórios
                                 missing_fields = []
