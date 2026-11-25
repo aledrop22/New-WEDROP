@@ -12,6 +12,7 @@ BACKUP_DIR = DATA_DIR / "backups"
 PRODUCTS_FILE = DATA_DIR / "data.json"
 DATABASE_FILE = DATA_DIR / "wedrop_monitoramento.db"
 RUN_STATE_FILE = DATA_DIR / "estado_coleta.json"
+FAILED_PRODUCTS_FILE = DATA_DIR / "produtos_falhados.json"
 BROWSER_SESSION_FILE = DATA_DIR / "storage_state.json"
 LOG_FILE = PROJECT_DIR / "logs" / "scraper_runs.log"
 ENV_FILE = PROJECT_DIR / ".env"
@@ -19,8 +20,8 @@ ENV_FILE = PROJECT_DIR / ".env"
 BASE_URL = "https://dash.wedrop.com.br"
 PRODUCTS_PER_PAGE = 100
 PRODUCT_READ_ATTEMPTS = 3
-DEFAULT_WORKERS = 3
-BATCH_SIZE = 10
+DEFAULT_WORKERS = 6
+BATCH_SIZE = 50
 BACKUPS_TO_KEEP_UNCOMPRESSED = 3
 
 # Recursos que não alteram o texto lido; bloquear acelera cada página.

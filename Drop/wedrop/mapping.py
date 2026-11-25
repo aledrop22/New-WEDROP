@@ -28,6 +28,7 @@ from .config import (
     BATCH_SIZE,
     DATABASE_FILE,
     DEFAULT_WORKERS,
+    FAILED_PRODUCTS_FILE,
     PRODUCTS_FILE,
     RUN_STATE_FILE,
     load_environment,
@@ -38,6 +39,11 @@ from .scraping.catalog import Category, ListedProduct, ListingError, filter_cate
 from .scraping.product_page import ProductJob, ProductReader
 from .scraping.session import SessionExpiredError, ensure_authenticated
 from .storage import products_file
+from .storage.failed_products import (
+    add_failed_products,
+    clear_category_failures,
+    get_failed_products_for_category,
+)
 from .storage.product_status import INACTIVE, effective_status
 from .storage.run_state import COMPLETED, IN_PROGRESS, load_run_state, save_run_state
 from .storage.sqlite_repository import SalesRepository
@@ -55,6 +61,7 @@ class DataPaths:
     backup_dir: Path = BACKUP_DIR
     state_file: Path = RUN_STATE_FILE
     database_file: Path = DATABASE_FILE
+    failed_products_file: Path = FAILED_PRODUCTS_FILE
 
     @classmethod
     def in_folder(cls, folder: Path) -> DataPaths:
@@ -63,6 +70,7 @@ class DataPaths:
             backup_dir=folder / "backups",
             state_file=folder / "estado_coleta.json",
             database_file=folder / "wedrop_monitoramento.db",
+            failed_products_file=folder / "produtos_falhados.json",
         )
 
 
@@ -73,9 +81,13 @@ class MappingOptions:
     local_only: bool = False
     workers: int = DEFAULT_WORKERS
     ask_for_credentials: bool = True
+    is_retry: bool = False  # Indica que é um retry de produtos falhados
 
     @property
     def is_partial(self) -> bool:
+        # Retry de produtos falhados não é considerado parcial
+        if self.is_retry:
+            return False
         return self.category_filter is not None or self.product_limit is not None
 
 
@@ -524,7 +536,7 @@ async def run_incremental(
     captured_at = datetime.now().astimezone().isoformat(timespec="seconds")
     products_json = _ProductsJsonFile(paths.products_file)
     sink = _BatchSink(paths, repository, supabase, captured_at, products_json)
-    summary = MappingSummary()
+    summary = MappingSummary(partial=options.is_partial)
     try:
         try:
             async with async_playwright() as playwright:
@@ -570,6 +582,12 @@ async def _refresh_catalog(
 
     await relogin()
     categories = await list_categories(listing_page)
+    
+    # Aplicar filtro de categoria se especificado (para retry de produtos falhados)
+    if options.category_filter:
+        categories = filter_categories(categories, options.category_filter)
+        log_progress(f"Filtrando categoria: {options.category_filter}")
+    
     summary.categories = len(categories)
     summary.site_total = sum(category.count or 0 for category in categories)
     log_progress(f"Categorias no site: {len(categories)}; o site informa {summary.site_total} produtos.")
@@ -592,6 +610,8 @@ async def _refresh_catalog(
                 supabase,
                 captured_at,
                 summary,
+                paths,
+                is_retry=options.is_retry,
             )
         except ListingError as exc:
             # Uma categoria com paginação quebrada não derruba as outras: fica incompleta e é tentada de novo
@@ -613,6 +633,8 @@ async def _refresh_category(
     supabase: SupabaseRepository | None,
     captured_at: str,
     summary: MappingSummary,
+    paths: DataPaths,
+    is_retry: bool = False,
 ) -> None:
     # Esgotados (Indisponível) não são relidos: quando voltarem a ter saldo, voltam à
     # listagem, a quantidade da categoria sobe e eles são lidos de novo.
@@ -620,6 +642,44 @@ async def _refresh_category(
     # Compara com todos os produtos guardados (esgotados inclusive): a quantidade do site
     # também conta os esgotados. Comparar só os disponíveis forçava leitura completa todo dia.
     reason = _full_read_reason(category, baselines, len(known))
+    
+    # Verificar se há produtos que falharam na execução anterior
+    failed_products = get_failed_products_for_category(paths.failed_products_file, category.name)
+    if failed_products and is_retry:
+        log_progress(f"{label}: {len(failed_products)} produto(s) falharam na execução anterior; tentando reler só eles.")
+        
+        # Criar jobs apenas para os produtos que falharam
+        failed_jobs = [
+            ProductJob(
+                fp.product_id,
+                fp.url,
+                category.name,
+            )
+            for fp in failed_products
+        ]
+        
+        failures = await crawler.crawl(failed_jobs)
+        
+        if not failures:
+            # Todos os produtos que falharam foram lidos com sucesso
+            log_progress(f"{label}: todos os {len(failed_products)} produtos que falharam foram lidos com sucesso.")
+            clear_category_failures(paths.failed_products_file, category.name)
+            _save_category(repository, supabase, category, len(available), captured_at)
+            summary.balance_only_categories.append(category.name)
+            return
+        else:
+            # Alguns produtos ainda falharam
+            still_failed = [(job.product_id, job.url, str(exc)) for job, exc in failures]
+            log_progress(f"{label}: {len(still_failed)} produto(s) ainda falharam; serão tentados novamente na próxima execução.")
+            add_failed_products(paths.failed_products_file, category.name, still_failed, category.count or 0, len(available))
+            summary.failed_ids.extend(job.product_id for job, _ in failures)
+            return
+    
+    if failed_products and not is_retry:
+        # Se não é retry, mas há produtos falhados, processar normalmente
+        # (o retry automático vai lidar com eles depois)
+        pass
+    
     if reason is None:
         log_progress(
             f"{label}: {category.count} produtos, sem alteração; comparando preço e saldo de "
@@ -628,15 +688,20 @@ async def _refresh_category(
         failures = await crawler.crawl([_balance_job(record, category) for record in available])
         if failures:
             # Falha pontual (página que não carregou): relê só esses produtos, não a categoria inteira
-            log_progress(f"  {len(failures)} produto(s) não lidos; releitura só deles.")
+            log_progress(f"  {len(failures)} produto(s) não lidos; salvando para próxima execução.")
+            failed_tuples = [(job.product_id, job.url, str(exc)) for job, exc in failures]
+            add_failed_products(paths.failed_products_file, category.name, failed_tuples, category.count or 0, len(available))
             failures = await crawler.crawl([job for job, _ in failures])
+            if failures:
+                still_failed = [(job.product_id, job.url, str(exc)) for job, exc in failures]
+                add_failed_products(paths.failed_products_file, category.name, still_failed, category.count or 0, len(available))
         if not failures:
             summary.balance_only_categories.append(category.name)
             _save_category(repository, supabase, category, len(available), captured_at)
             return
         summary.failed_ids.extend(job.product_id for job, _ in failures)
         log_progress(
-            f"Categoria {category.name} não ficou completa; a próxima execução relê só os produtos que faltaram."
+            f"Categoria {category.name} não ficou completa; produtos que falharam serão tentados na próxima execução."
         )
         return
 
@@ -698,10 +763,19 @@ async def _refresh_category(
     if gone_failures:
         # A página pode ter sido removida do site; o registro anterior fica como estava.
         log_progress(f"  {len(gone_failures)} produto(s) que saíram da listagem não abriram; mantidos como estavam.")
+    
+    # Salvar produtos que falharam para próxima execução
+    all_failures = failures + gone_failures
+    if all_failures:
+        failed_tuples = [(job.product_id, job.url, str(exc)) for job, exc in all_failures]
+        add_failed_products(paths.failed_products_file, category.name, failed_tuples, category.count or 0, len(listing))
+    
     if failures or category.name in summary.shortfall_categories:
-        log_progress(f"Categoria {category.name} não ficou completa; a próxima execução a lê de novo.")
+        log_progress(f"Categoria {category.name} não ficou completa; produtos que falharam serão tentados na próxima execução.")
         return
     _save_category(repository, supabase, category, len(listing), captured_at)
+    # Limpar falhas se categoria completou
+    clear_category_failures(paths.failed_products_file, category.name)
 
 
 def _full_read_reason(category: Category, baselines: dict[str, int | None], stored_count: int) -> str | None:

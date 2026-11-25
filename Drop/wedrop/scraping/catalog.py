@@ -148,13 +148,14 @@ async def read_category_listing(page: Page, category: Category) -> dict[str, Lis
     await _set_products_per_page(page, category.count)
 
     links: dict[str, ListedProduct] = {}
-    for _ in range(MAX_LISTING_PAGES):
-        _merge_listed(links, await _collect_visible_links(page))
+    for page_num in range(MAX_LISTING_PAGES):
+        page_links = await _collect_visible_links(page)
+        _merge_listed(links, page_links)
         state = await pagination_state(page)
         if state is None:
             break
         current, total = state
-        log_progress(f"Listagem: página {current} de {total}; {len(links)} produtos acumulados.")
+        log_progress(f"Listagem: página {current} de {total}; {len(links)} produtos acumulados ({len(page_links)} nesta página).")
         if current >= total:
             break
         if category.count is not None and len(links) >= category.count:
@@ -290,7 +291,7 @@ async def _go_to_page(page: Page, category: Category, target: int) -> None:
     
     # Espera mais tempo para a página carregar
     await page.wait_for_timeout(1500)
-    
+
     for attempt in range(_PAGE_SETTLE_ATTEMPTS):
         await page.wait_for_timeout(300)
         state = await pagination_state(page)
